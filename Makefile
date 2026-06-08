@@ -1,6 +1,7 @@
 MACAVER ?= "unknown"
 NUM_JOB ?= 4
 ARCH_L ?= amd64
+BASEREG ?= mxcr.io/hub/registry.access.redhat.com
 REG ?= cr.metax-tech.com/cloud
 DOCKERTAG = $(REG)/mx-exporter:${MACAVER}
 
@@ -18,6 +19,8 @@ n100:
 mxc:
 	DOCKER_BUILDKIT=1 docker build \
 		--build-arg ARCH="$(ARCH_L)" \
+		--build-arg VERSION="${MACAVER}" \
+		--build-arg BASEREG="${BASEREG}" \
 		-t $(DOCKERTAG) $(CURDIR)
 	docker save $(DOCKERTAG) | xz -zfT$(NUM_JOB) > mx-exporter-${MACAVER}-$(ARCH_L).xz
 

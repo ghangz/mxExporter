@@ -43,6 +43,7 @@ spec:
             - "-p={{.Values.service.port}}"
             - "-i={{.Values.gatherInterval}}"
             - "-im={{.Values.ibMonitor}}"
+            - "-kd={{.Values.domain}}"
           env:
             - name: "NODE_NAME"
               valueFrom:
@@ -65,11 +66,11 @@ spec:
             - name: "var-log"
               readOnly: true
               mountPath: "/host/var/log"
-            {{- if and (not .Values.hostNetwork) .Values.ibMonitor }}
             - name: "ib-devices"
-              readOnly: true
               mountPath: "/sys/devices"
-            {{- end }}
+            - name: "bnxt-devices"
+              readOnly: true
+              mountPath: "/sys/kernel/debug"
             {{- with .Values.volumeMounts }}
               {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -86,11 +87,12 @@ spec:
         - name: "all-devices"
           hostPath:
             path: {{ .Values.devicePath }}
-        {{- if and (not .Values.hostNetwork) .Values.ibMonitor }}
         - name: "ib-devices"
           hostPath:
             path: "/sys/devices"
-        {{- end }}
+        - name: "bnxt-devices"
+          hostPath:
+            path: "/sys/kernel/debug"
         - name: "config-vol"
           configMap:
             name: "exporter-metrics-config-map"

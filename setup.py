@@ -22,7 +22,7 @@ setup(
     package_data={'mx_exporter': ['./*']},
     python_requires=">=3.0",
     install_requires=[
-        'prometheus_client>=0.7.0',
+        'prometheus_client>=0.10.0',
         'grpcio',
         'protobuf>=3.12.0'
     ],

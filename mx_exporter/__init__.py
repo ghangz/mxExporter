@@ -2,6 +2,7 @@ import sys
 import os.path
 import argparse
 import signal
+import json
 from http.server import HTTPServer
 from prometheus_client import MetricsHandler
 from prometheus_client import REGISTRY, GC_COLLECTOR, PLATFORM_COLLECTOR, PROCESS_COLLECTOR
@@ -64,6 +65,7 @@ class MxExporterHandler(MetricsHandler):
 <body>
 <h1>MetaX Exporter</h1>
 <p><a href="./metrics">Metrics</a></p>
+<p><a href="./json">JSON</a></p>
 </body>
 </html>"""
             self.wfile.write(html_content.encode("utf-8"))
@@ -73,10 +75,33 @@ class MxExporterHandler(MetricsHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
 
+        elif self.path == '/json':
+            self._handle_json()
+
+        elif self.path == '/favicon.ico': # skip browser automatic accompanying request
+            pass
+
         else:
             # prometheus /metrics
             super().do_GET()
 
+    def _handle_json(self):
+        result = []
+        for metric_family in REGISTRY.collect():
+            for sample in metric_family.samples:
+                tags = ','.join(f'{k}={v}' for k, v in sample.labels.items())
+                result.append({
+                    "metric": sample.name,
+                    "value":  sample.value,
+                    "type":   metric_family.type,
+                    "tags":   tags,
+                })
+        body = json.dumps(result, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
 def main():
     signal.signal(signal.SIGINT, signal_handler)
@@ -90,6 +115,8 @@ def main():
     parser.add_argument("-lm", "--log-monitor", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
     parser.add_argument("-im", "--ib-monitor", type=int, choices=[0,1], default=0, help=argparse.SUPPRESS) # help="0/1 - Disable/Enable IB NIC counter monitoring"
     parser.add_argument("-mp", "--mount-point", type=check_path, default="/", help="Container mount point")
+    parser.add_argument("-kp", "--kubelet-path", type=str, default="/var/lib/kubelet", help="Kubelet root dir")
+    parser.add_argument("-kd", "--k8s-domains", nargs='+', type=str, default=["metax-tech"], help="Monitoring the k8s domains contains specified keywords, multi-keywords e.g. -kd domain1 domain2")
 
     args = parser.parse_args()
     print(args)
@@ -111,7 +138,7 @@ def main():
 
     registry = REGISTRY
 
-    mx_collector = MxCollector(cfg_file, registry, args.interval/1000, args.ib_monitor, args.mount_point)
+    mx_collector = MxCollector(cfg_file, registry, args.interval/1000, args.ib_monitor, args.mount_point, args.kubelet_path, args.k8s_domains)
 
     server_address = ('', args.port)
     try:

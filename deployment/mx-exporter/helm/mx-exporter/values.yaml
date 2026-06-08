@@ -107,6 +107,8 @@ tolerations: []
 
 affinity: {}
 
+# Specify the domain contains target keyword to collect the pod info
+domain: "metax-tech"
 # Path to the kubelet socket for /pod-resources
 kubeletPath: "/var/lib/kubelet/pod-resources"
 # Path to the devices

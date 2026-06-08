@@ -10,6 +10,9 @@ POD_MONITOR=0
 MOUNT_POINT="/host"
 HOST_NETWORK_MODE=0
 ALWAYS_RESTART_MODE=1
+KUBELET_PATH="/var/lib/kubelet"
+K8S_DOMAIN="metax-tech"
+PID_ARG="host"
 
 usage() {
     cat <<END_USAGE
@@ -33,18 +36,13 @@ Options:
     --mount-point|-mp=<path>          Specific container mount path, default: "$MOUNT_POINT"
     --host-network|-hn=<[0|1]>        Disable/Enable host network mode, default: $HOST_NETWORK_MODE
     --always-restart|-ar=<[0|1]>      Disable/Enable container always restart mode, default: $ALWAYS_RESTART_MODE
+    --kubelet-path|-kp=<kubelet path> Specific kubelet root dir, default: $KUBELET_PATH
+    --k8s-domain|-kd=<k8s domain>     Specific k8s domain contains target keyword, default: $K8S_DOMAIN
 END_USAGE
 }
 
 DOCKER_RUN_ARG=(--hostname=$HOSTNAME)
 MXEXPORTER_ARG=
-
-# mount MetaX GPU resources
-if [ -c "/dev/mxgvm" ]; then
-    DOCKER_RUN_ARG+=(--device=/dev/dri --device=/dev/mxgvm)
-else
-    DOCKER_RUN_ARG+=(--device=/dev/dri)
-fi
 
 while (($#))
 do
@@ -107,6 +105,18 @@ do
         ALWAYS_RESTART_MODE=${1##*=}
         shift
         ;;
+    --kubelet-path=*|-kp=*)
+        KUBELET_PATH=${1##*=}
+        shift
+        ;;
+    --k8s-domain=*|-kd=*)
+        K8S_DOMAIN=${1##*=}
+        shift
+        ;;
+    --pid=*)
+        PID_ARG=${1##*=}
+        shift
+        ;;
     *)
         echo "invalid parameter, use -h|--help to get the usage"
         exit 3
@@ -114,8 +124,19 @@ do
     esac
 done
 
+# mount MetaX GPU resources
+if [ -c "/dev/mxgvm" ]; then
+    DOCKER_RUN_ARG+=(--device=/dev/mxgvm)
+fi
+
+if [ "$CONTAINER_TOOL" = "nerdctl" ]; then
+    DOCKER_RUN_ARG+=(-v /dev/dri:/dev/dri)
+else
+    DOCKER_RUN_ARG+=(--device=/dev/dri)
+fi
+
 MXEXPORTER_ARG="$MXEXPORTER_ARG -mp $MOUNT_POINT"
-DOCKER_RUN_ARG+=(-v /var/log:$MOUNT_POINT/var/log)
+DOCKER_RUN_ARG+=(-v /var/log:$MOUNT_POINT/var/log:ro)
 
 if [ $HOST_NETWORK_MODE -eq 1 ]; then
     DOCKER_RUN_ARG+=(--network host)
@@ -123,21 +144,22 @@ else
     DOCKER_RUN_ARG+=(-p $HOST_PORT:$HOST_PORT)
 fi
 
+DOCKER_RUN_ARG+=(-v /sys/devices:/sys/devices --security-opt apparmor=unconfined)
+DOCKER_RUN_ARG+=(-v /sys/kernel/debug:/sys/kernel/debug:ro)
+
 if [ $IB_MONITOR -eq 1 ]; then
     MXEXPORTER_ARG="$MXEXPORTER_ARG -im 1"
-
-    if [ $HOST_NETWORK_MODE != 1 ]; then
-        DOCKER_RUN_ARG+=(-v /sys/devices:/sys/devices)
-    fi
 fi
 
 if [ $POD_MONITOR -eq 1 ]; then
-    DOCKER_RUN_ARG+=(-v /var/lib/kubelet/pod-resources:/var/lib/kubelet/pod-resources)
+    DOCKER_RUN_ARG+=(-v $KUBELET_PATH/pod-resources:/var/lib/kubelet/pod-resources)
 fi
 
 if [ $ALWAYS_RESTART_MODE -eq 1 ]; then
     DOCKER_RUN_ARG+=(--restart=always)
 fi
+
+DOCKER_RUN_ARG+=(--pid=$PID_ARG)
 
 # support sgpu mode
 sgpuIndex=`cat /proc/devices |grep sgpu |awk '{print $1}'`

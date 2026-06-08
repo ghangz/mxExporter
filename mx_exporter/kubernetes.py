@@ -28,8 +28,16 @@ Software, at any time. MetaX reserves all the right for the final explanation.
 """
 
 import grpc
+import os
 from mx_exporter import podresourcev1alpha1_pb2
 from mx_exporter import podresourcev1alpha1_pb2_grpc
+from datetime import datetime
+
+
+old_print = print
+def timestamp_print(*args, **kwargs):
+    old_print(datetime.now(), "kubernetes", *args, **kwargs)
+print = timestamp_print
 
 
 class PodInfo:
@@ -48,29 +56,63 @@ class PodInfo:
         return self.__str__()
 
 
-def get_pod_resource():
-    device_pod_map = {}
+class PodInfoCollector:
 
-    with grpc.insecure_channel('unix:///var/lib/kubelet/pod-resources/kubelet.sock') as channel:
-        stub = podresourcev1alpha1_pb2_grpc.PodResourcesListerStub(channel)
-        try:
-            response = stub.List(podresourcev1alpha1_pb2.ListPodResourcesRequest())
-        except grpc.RpcError as rpc_error:
-#            print("grpc error: %s" % rpc_error.details())
+    def __init__(self, kubelet_path = '/var/lib/kubelet', k8s_domains = [("metax-tech")]):
+        self.kubelet_path = kubelet_path + '/pod-resources/kubelet.sock'
+        self.kubelet_sock = 'unix://' + self.kubelet_path
+        self.sock_available = self.check_kubelet_sock()
+        self.k8s_domains = k8s_domains
+
+    def check_kubelet_sock(self):
+        if not os.path.exists(self.kubelet_path):
+            print("kubelet sock %s not exist" % self.kubelet_path)
+            return False
+
+        with grpc.insecure_channel(self.kubelet_sock) as channel:
+            stub = podresourcev1alpha1_pb2_grpc.PodResourcesListerStub(channel)
+            try:
+                stub.List(podresourcev1alpha1_pb2.ListPodResourcesRequest())
+            except grpc.RpcError as rpc_error:
+                print("kubelet sock cannot access: %s" % rpc_error.details())
+                return False
+
+        print("kubelet sock %s access success" % self.kubelet_sock)
+        return True
+
+    def get_pod_resource(self):
+        device_pod_map = {}
+
+        if not self.sock_available:
             return device_pod_map
 
-    for pod in response.pod_resources:
-        for container in pod.containers:
-            for device in container.devices:
-                if not "metax-tech" in device.resource_name:
-                    continue
+        with grpc.insecure_channel(self.kubelet_sock) as channel:
+            stub = podresourcev1alpha1_pb2_grpc.PodResourcesListerStub(channel)
+            try:
+                response = stub.List(podresourcev1alpha1_pb2.ListPodResourcesRequest())
+            except grpc.RpcError as rpc_error:
+                print("grpc error: %s" % rpc_error.details())
+                return device_pod_map
 
-                for device_id in device.device_ids:
-                    device_pod_map[device_id] = PodInfo(pod.name, pod.namespace, container.name, device_id)
+        for pod in response.pod_resources:
+            for container in pod.containers:
+                for device in container.devices:
+                    if not any(domain in device.resource_name for domain in self.k8s_domains):
+                        continue
 
-    return device_pod_map
+                    for device_id in device.device_ids:
+                        device_pod_map[device_id] = PodInfo(pod.name, pod.namespace, container.name, device_id)
+
+        print("get_pod_resource size %d" % (len(device_pod_map)))
+
+        return device_pod_map
 
 
 if __name__ == "__main__":
-    device_pod = get_pod_resource()
+    import sys
+    kub_path = '/var/lib/kubelet'
+    if len(sys.argv) >= 2 :
+        kub_path = sys.argv[1]
+
+    device_pod = PodInfoCollector(kub_path).get_pod_resource()
     print(device_pod)

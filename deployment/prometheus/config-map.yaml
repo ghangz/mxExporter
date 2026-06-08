@@ -8,120 +8,352 @@ metadata:
 data:
   prometheus.rules: |-
     groups:
-      - name: metax gpu alerting rules
+      - name: metax-gpu-alerting-rules
         rules:
           - alert: GPU not available
             expr: mx_gpu_state == 0
             labels:
-              severity: error
+              source: metax
+              severity: critical
             annotations:
-              description: Alert raise immediately when found one or more MetaX devices are not available. Use "mx-smi -L" or "dmesg -T" to check detailed reason, and "mx-smi --show-unavailable-reason" to find recover suggestion.
-
-          - alert: Driver kernel error
-            expr: mx_kernel_error > 0
-            labels:
-              severity: error
-            annotations:
-              description: Alert raise immediately when found kernel error, use "dmesg -T" to check detailed reason.
+              description: GPU not available.
+              diagnostic: Use "mx-smi -L" or "dmesg -T" to check the detailed cause.
+              recovery: Use "mx-smi --show-unavailable-reason" to look up recovery recommendations or restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
 
           - alert: MetaXLink speed anomaly
-            expr: mx_mxlk_bw > 0 AND mx_mxlk_speed < 32
+            expr: mx_mxlk_bw > 0 AND mx_mxlk_speed < mx_max_mxlk_speed AND mx_gpu_usage > 0
             labels:
-              severity: error
+              source: metax
+              severity: critical
             annotations:
-              description: Alert raise immediately when found MetaXlink speed anomaly, use "mx-smi topo --show-mxlk" to check detailed value.
+              description: MetaXLink speed degraded while GPU is not idle.
+              diagnostic: Use "mx-smi mxlk --show" to check the detailed value.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
 
           - alert: MetaXLink width anomaly
-            expr: mx_mxlk_width > 0 and mx_mxlk_width < 16
+            expr: mx_mxlk_width > 0 AND mx_mxlk_width < mx_max_mxlk_width AND mx_gpu_usage > 0
             labels:
-              severity: error
+              source: metax
+              severity: critical
             annotations:
-              description: Alert raise immediately when found MetaXlink width anomaly, use "mx-smi --show-metaxlink-bandwidth" to check detailed value.
+              description: MetaXLink width degraded while GPU is not idle.
+              diagnostic: Use "mx-smi mxlk --show-mxlk" to check the detailed value.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
 
           - alert: PCIe speed anomaly
-            expr: mx_gpu_usage > 0 AND mx_pcie_speed < 32
+            expr: mx_pcie_speed < mx_max_pcie_speed AND mx_gpu_usage > 0
             labels:
-              severity: error
+              source: metax
+              severity: critical
             annotations:
-              description: Alert raise immediately when found PCIe speed anomaly, use "mx-smi --show-pcie" to check detailed value.
+              description: PCIe speed degraded while GPU is not idle.
+              diagnostic: Use "mx-smi --show-pcie" to check the detailed value.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
 
           - alert: PCIe width anomaly
-            expr: mx_gpu_usage > 0 AND mx_pcie_speed < 16
+            expr: mx_pcie_width < mx_max_pcie_width AND mx_gpu_usage > 0
             labels:
-              severity: error
+              source: metax
+              severity: critical
             annotations:
-              description: Alert raise immediately when found PCIe width anomaly, use "mx-smi --show-pcie" to check detailed value.
+              description: PCIe width degraded while GPU is not idle.
+              diagnostic: Use "mx-smi --show-pcie" to check the detailed value.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
 
           - alert: Over temperature
-            expr: mx_chip_hotspot_temp > 110 OR mx_board_core_temp > 115
+            expr: mx_chip_hotspot_temp > mx_max_gpu_work_temp
             labels:
-              severity: error
+              source: metax
+              severity: critical
             annotations:
-              description: Alert raise immediately when found one or more MetaX devices over temperature, use "mx-smi --show-temperature" to check detailed value. It is better to shutdown the server.
+              description: GPU core temperature above max GPU work temperature.
+              diagnostic: Use "mx-smi --show-temperature" to check the detailed value. Check cooling system and server fan configuration.
+              recovery: Stop the job immediately, and if the temperature does not drop, shut down the server. After cooling down, restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery. Keep GPU temperature at or below 85°C.
 
-          - alert: High temperature
-            expr: mx_chip_hotspot_temp > 100 OR mx_board_core_temp > 100
+          - alert: Too high temperature
+            expr: mx_chip_hotspot_temp > mx_max_gpu_work_temp * 0.9 AND mx_chip_hotspot_temp <= mx_max_gpu_work_temp
             for: 30s
             labels:
+              source: metax
+              severity: major
+            annotations:
+              description: GPU core temperature above 90% of max GPU work temperature.
+              diagnostic: Use "mx-smi --show-temperature" to check the detailed value. Check cooling system and server fan configuration.
+              recommendation: It is better to remove running tasks.
+
+          - alert: High temperature
+            expr: mx_chip_hotspot_temp > mx_max_gpu_work_temp * 0.8 AND mx_chip_hotspot_temp <= mx_max_gpu_work_temp * 0.9
+            for: 30s
+            labels:
+              source: metax
               severity: warning
             annotations:
-              description: Alert raise immediately when found one or more MetaX devices are with very high temperature, use "mx-smi --show-temperature" to check detailed value. It is better to remove running tasks.
+              description: GPU core temperature above 80% of max GPU work temperature.
+              diagnostic: Use "mx-smi --show-temperature" to check the detailed value. Check cooling system and server fan configuration.
+              recommendation: It is better to remove running tasks.
 
-          - alert: XCore DPM downgrade
-            expr: mx_gpu_usage > 0 AND mx_xcore_dpm_level < 5
+          - alert: Too many SRAM and DRAM uncorrectable errors
+            expr: increase(mx_ecc_error_count{type=~".*_ue"}[1h]) > 3
             labels:
-              severity: error
+              source: metax
+              severity: critical
             annotations:
-              description: Alert raise immediately when found xcore DPM downgrade, use "mx-smi --show-dpm cur" to check details.
+              description: More than 3 uncorrectable errors occurred in SRAM and DRAM in the past hour.
+              diagnostic: Use "mx-smi --count-ecc" to check the detailed cause.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
 
-          - alert: clock throttle
+          - alert: Driver kernel error
+            expr: increase(mx_driver_log_errors[5m]) > 0
+            labels:
+              source: metax
+              severity: major
+            annotations:
+              description: Detected driver errors in kernel log.
+              diagnostic: Use "dmesg -T" to check the detailed cause.
+
+          - alert: Clock throttle reason
             expr: mx_clk_thr > 1
             labels:
-              severity: warning
+              source: metax
+              severity: major
             annotations:
-              description: Alert raise immediately when found clock throttling, use "mx-smi --show-clk-tr" to check detailed reason.
+              description: Clock throttling.
+              diagnostic: Use "mx-smi --show-clk-tr" to check the detailed reason.
 
-          - alert: SRAM and DRAM uncorrectable Errors
-            expr: mx_ecc_error_count{type=~".*_ue"} > 0
+          - alert: SRAM and DRAM uncorrectable errors
+            expr: increase(mx_ecc_error_count{type=~".*_ue"}[5m]) > 0
             labels:
-              severity: error
+              source: metax
+              severity: major
             annotations:
-              description: Alert raise immediately when found SRAM and DRAM uncorrectable Errors, use "mx-smi --ecc-count" to check details.
+              description: Uncorrectable errors occurred in SRAM and DRAM in the past 5 minutes.
+              diagnostic: Use "mx-smi --count-ecc" to check the detailed cause.
 
-          - alert: SRAM and DRAM correctable Errors
-            expr: mx_ecc_error_count{type=~".*_ce"} > 0
+          - alert: SRAM and DRAM correctable errors
+            expr: increase(mx_ecc_error_count{type=~".*_ce"}[5m]) > 0
             labels:
-              severity: warning
+              source: metax
+              severity: minor
             annotations:
-              description: Alert raise immediately when found SRAM and DRAM Correctable Errors, use "mx-smi --ecc-count" to check details.
+              description: Correctable errors occurred in SRAM and DRAM in the past 5 minutes.
+              diagnostic: Use "mx-smi --count-ecc" to check the detailed cause.
 
-          - alert: RAS uncorrectable error count
-            expr: mx_ras_count{type=~".*ue"} > 0
+          - alert: RAS uncorrectable errors
+            expr: increase(mx_ras_count{register_name=~".*ue"}[5m]) > 0
             labels:
-              severity: error
+              source: metax
+              severity: major
             annotations:
-              description: Alert raise immediately when found RAS Uncorrectable Errors, use "mx-smi ras ras --show-count" to check details.
+              description: RAS uncorrectable errors occurred in the past 5 minutes.
+              diagnostic: Use "mx-smi ras --show-count" to check the detailed cause.
 
-          - alert: RAS correctable error count
-            expr: mx_ras_count{type=~".*ce"} > 0
+          - alert: RAS correctable errors
+            expr: increase(mx_ras_count{register_name=~".*ce"}[5m]) > 0
             labels:
-              severity: warning
+              source: metax
+              severity: minor
             annotations:
-              description: Alert raise immediately when found RAS Correctable Errors, use "mx-smi ras ras --show-count" to check details.
+              description: RAS correctable errors occurred in the past 5 minutes.
+              diagnostic: Use "mx-smi ras --show-count" to check the detailed cause.
 
-          - alert: pcie event which belongs to uncorrectable error count
-            expr: mx_pcie_event{type=~"aer_ue"} > 0
+          - alert: PCI event which belongs to uncorrectable errors
+            expr: increase(mx_pci_event{type=~"aer_ue"}[5m]) > 0
             labels:
-              severity: error
+              source: metax
+              severity: major
             annotations:
-              description: Alert raise immediately when found pcie event's uncorrectable error, use "mx-smi --show-event all" to check details.
+              description: PCI event which belongs to uncorrectable errors occurred in the past 5 minutes.
+              diagnostic: Use "mx-smi misc --show-event all" to check the detailed cause.
 
-          - alert: pcie event which belongs to correctable error count
-            expr: mx_pcie_event{type=~"aer_ce"} > 0
+          - alert: PCI event which belongs to correctable errors
+            expr: increase(mx_pci_event{type=~"aer_ce"}[5m]) > 0
             labels:
-              severity: warning
+              source: metax
+              severity: minor
             annotations:
-              description: Alert raise immediately when found pcie event's correctable error, use "mx-smi --show-event all" to check details.
+              description: PCI event which belongs to correctable errors occurred in the past 5 minutes.
+              diagnostic: Use "mx-smi misc --show-event all" to check the detailed cause.
+
+          - alert: MetaXLink AER which belongs to uncorrectable errors
+            expr: increase(mx_mxlk_aer_count{type="ue"}[5m]) > 0
+            labels:
+              source: metax
+              severity: major
+            annotations:
+              description: MetaXLink AER which belongs to uncorrectable errors occurred in the past 5 minutes.
+              diagnostic: Use "mx-smi mxlk --show-aer" to check the detailed cause.
+
+          - alert: MetaXLink AER which belongs to correctable errors
+            expr: increase(mx_mxlk_aer_count{type="ce"}[5m]) > 0
+            labels:
+              source: metax
+              severity: minor
+            annotations:
+              description: MetaXLink AER which belongs to correctable errors occurred in the past 5 minutes.
+              diagnostic: Use "mx-smi mxlk --show-aer" to check the detailed cause.
+
+          - alert: Driver EID error
+            expr: mx_driver_eid_errors > 0
+            labels:
+              source: metax
+              severity: major
+            annotations:
+              description: An EID error occurred in the driver.
+              diagnostic: View GPU EID manual for more information.
+
+          - alert: Bad page detected continuously
+            expr: increase(mx_ecc_error_count{type="retired_page"}[1h]) > 2
+            labels:
+              source: metax
+              severity: major
+            annotations:
+              description: HBM adds more than 2 bad pages in the past hour. May frequently affect jobs.
+              diagnostic: Use "mx-smi --count-ecc" to check the detailed cause.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
+
+          - alert: Too many retired pages
+            expr: mx_ecc_error_count{type="retired_page"} > 64
+            labels:
+              source: metax
+              severity: critical
+            annotations:
+              description: HBM has more than 64 bad pages.
+              diagnostic: Use "mx-smi --count-ecc" to check the detailed cause.
+              recovery: Report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
+
+          - alert: Too many SRAM correctable errors
+            expr: mx_ecc_error_count{type="sram_ce"} > 255
+            labels:
+              source: metax
+              severity: critical
+            annotations:
+              description: More than 255 correctable errors occurred in SRAM.
+              diagnostic: Use "mx-smi --count-ecc" to check the detailed cause.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
+
+          - alert: Driver EID error requiring restart
+            expr: mx_driver_eid_errors == 4362
+              OR mx_driver_eid_errors == 8451
+              OR mx_driver_eid_errors == 8463
+              OR mx_driver_eid_errors == 8705
+              OR mx_driver_eid_errors == 12817
+            labels:
+              source: metax
+              severity: critical
+            annotations:
+              description: An EID error of the specified type occurred in the driver.
+              diagnostic: View GPU EID manual for more information.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Keep following.
+
+          - alert: Driver EID error requiring restart and isolate
+            expr: mx_driver_eid_errors == 8460
+              OR mx_driver_eid_errors == 8461
+              OR mx_driver_eid_errors == 8462
+              OR mx_driver_eid_errors == 8962
+            labels:
+              source: metax
+              severity: critical
+            annotations:
+              description: An EID error of the specified type occurred in the driver.
+              diagnostic: View GPU EID manual for more information.
+              recovery: Restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
+
+          - alert: Driver EID error requiring rerun or reboot
+            expr: mx_driver_eid_errors{eid_info=~".*(0x4|0x8).*"} == 8450
+              OR mx_driver_eid_errors == 8452
+              OR mx_driver_eid_errors == 8456
+            labels:
+              source: metax
+              severity: critical
+            annotations:
+              description: An EID error of the specified type occurred in the driver.
+              diagnostic: View GPU EID manual for more information.
+              recovery: Rerun the job. If the issue persists, restart the server. If the issue persists after restarting, report for repair.
+              recommendation: Keep following.
+
+          - alert: Driver EID error requiring repair and isolate
+            expr: mx_driver_eid_errors == 8454
+              OR mx_driver_eid_errors == 8967
+              OR mx_driver_eid_errors == 8968
+            labels:
+              source: metax
+              severity: critical
+            annotations:
+              description: An EID error of the specified type occurred in the driver.
+              diagnostic: View GPU EID manual for more information.
+              recovery: Report for repair.
+              recommendation: Isolate the node and re-add it to the cluster after recovery.
+
+          - alert: ETH interface anomaly due to software bug
+            expr: increase(mx_eth_port_counter{counter_name="fatal_op"}[5m]) > 0
+              OR increase(mx_eth_port_counter{counter_name="fatal_cq"}[5m]) > 0
+              OR increase(mx_eth_port_counter{counter_name="fatal_retry"}[5m]) > 0
+              OR increase(mx_eth_port_counter{counter_name="fatal_rx"}[5m]) > 0
+            labels:
+              source: metax
+              severity: major
+            annotations:
+              description: ETH interface anomaly due to software bug in the past 5 minutes.
+
+          - alert: ETH interface link instability
+            expr: increase(mx_eth_port_counter{counter_name="icrc_err"}[5m]) > 0
+              OR increase(mx_eth_port_counter{counter_name="len_err"}[5m]) > 0
+            labels:
+              source: metax
+              severity: major
+            annotations:
+              description: ETH interface link instability in the past 5 minutes.
+              diagnostic: Check ETH physical interface.
+              recovery: Unplug and plug in the ETH physical interface. If the issue persists after action, replace the ETH cable or module.
+
+          - alert: Correctable error count grows too fast
+            expr: sum by (Hostname, deviceId) (
+                label_replace(
+                  increase(mx_mxlk_aer_count{type="ce"}[1d]),
+                  "__error_source__", "mxlk", "", ""
+                )
+                OR label_replace(
+                  increase(mx_pci_event{type="aer_ce"}[1d]),
+                  "__error_source__", "pci", "", ""
+                )
+                OR label_replace(
+                  increase(mx_ecc_error_count{type=~".*_ce"}[1d]),
+                  "__error_source__", "ecc", "", ""
+                )
+              ) > 24
+              OR sum by (Hostname, deviceId) (
+                label_replace(
+                  increase(mx_mxlk_aer_count{type="ce"}[1h]),
+                  "__error_source__", "mxlk", "", ""
+                )
+                OR label_replace(
+                  increase(mx_pci_event{type="aer_ce"}[1h]),
+                  "__error_source__", "pci", "", ""
+                )
+                OR label_replace(
+                  increase(mx_ecc_error_count{type=~".*_ce"}[1h]),
+                  "__error_source__", "ecc", "", ""
+                )
+              ) > 10
+            labels:
+              source: metax
+              severity: major
+            annotations:
+              description: The count of correctable errors is growing too fast.
+              diagnostic: Use "mx-smi mxlk --show-aer" or "mx-smi --show-event all" or "mx-smi --count-ecc" to check the detailed cause.
+              recommendation: Ask a technician to troubleshoot.
 
   prometheus.yml: |-
     global:

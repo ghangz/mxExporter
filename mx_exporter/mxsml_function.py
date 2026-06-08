@@ -80,10 +80,26 @@ def mxsml_get_die_memory_info(device_id, die_id): # ret: (MxSmlReturn, MxSmlMemo
         return (ret, info)
 
 
-def mxsml_get_device_metaxlink_info(device_id): # ret: (MxSmlReturn, MxSmlMetaXLinkInfo)
-    mxlk_info = MxSmlMetaXLinkInfo()
-    ret = mxSmlGetMetaXLinkInfo(device_id, byref(mxlk_info))
-    return(ret, mxlk_info)
+def mxsml_get_device_metaxlink_info(device_id): # ret: (MxSmlReturn, [])
+    mxlk_info = []
+    if hasattr(_module, "mxSmlGetMetaXLinkInfo_v2"):
+        entryList = []
+        mxlk_info_v2 = (MxSmlSingleMetaXLinkInfo* METAX_LINK_NUM)(*entryList)
+        link_size = c_uint(METAX_LINK_NUM)
+        ret = mxSmlGetMetaXLinkInfo_v2(device_id, link_size, mxlk_info_v2)
+        if ret == MxSmlReturn.MXSML_Success:
+            for idx in range(link_size.value):
+                mxlk_info.append((mxlk_info_v2[idx].speed, mxlk_info_v2[idx].width))
+
+        return (ret, mxlk_info)
+    else:
+        mxlk_info_v1 = MxSmlMetaXLinkInfo()
+        ret = mxSmlGetMetaXLinkInfo(device_id, byref(mxlk_info_v1))
+        if ret == MxSmlReturn.MXSML_Success:
+            for idx in range(METAX_LINK_NUM):
+                mxlk_info.append((mxlk_info_v1.speed[idx], mxlk_info_v1.width[idx]))
+
+        return (ret, mxlk_info)
 
 
 def mxsml_get_device_temperature_info(device_id, sensor): # ret: (MxSmlReturn, int)
@@ -136,7 +152,7 @@ def mxsml_get_die_clocks(device_id, die_id, ip): # ret: (MxSmlReturn, List[int])
 def mxsml_get_device_metaxlink_bandwidth(device_id, mxlk_type): # ret: (MxSmlReturn, int, MxSmlMetaXLinkBandwidth*)
     entryList = []
     bandwidth = (MxSmlMetaXLinkBandwidth* METAX_LINK_NUM)(*entryList)
-    linkSize = c_uint(8)
+    linkSize = c_uint(METAX_LINK_NUM)
     ret = mxSmlGetMetaXLinkBandwidth(device_id, mxlk_type, linkSize, bandwidth)
     return (ret, linkSize.value, bandwidth)
 
@@ -339,8 +355,8 @@ def mxsml_get_die_ras_status(device_id, die_id): # ret: (MxSmlReturn, List[Tuple
 
 
 def mxsml_get_die_unavailable_reason(device_id, die_id): # ret: (MxSmlReturn, str)
+    unavailable_reason = ""
     if hasattr(_module, "mxSmlGetDieUnavailableReason"):
-        unavailable_reason = ""
         sml_unavailable_reason = MxSmlDeviceUnavailableReasonInfo()
         ret = mxSmlGetDieUnavailableReason(device_id, die_id, byref(sml_unavailable_reason))
         if ret == MxSmlReturn.MXSML_Success:
@@ -378,3 +394,101 @@ def mxsml_get_die_pmbus_info(device_id, die_id, unit): # ret: (MxSmlReturn, MxSm
         return (ret, pmbusPowerInfo)
     else:
         return mxsml_get_device_pmbus_info(device_id, unit)
+
+def mxsml_get_device_isa_version(device_id): # ret: int(isaVersion)
+    isaVersion = c_int(0)
+    mxSmlGetDeviceIsaVersion(device_id, byref(isaVersion))
+    return isaVersion.value
+
+def mxsml_get_board_power_limit(device_id): # ret: (MxSmlReturn, int)
+    powerLimit = c_uint(0)
+    ret = mxSmlGetBoardPowerLimit(device_id, byref(powerLimit))
+    return (ret, powerLimit.value)
+
+def mxsml_get_board_power_limit_constraints(device_id): # ret: (MxSmlReturn, int, int)
+    if hasattr(_module, "mxSmlGetBoardPowerLimitConstraints"):
+        minPowerLimit = c_uint(0)
+        maxPowerLimit = c_uint(0)
+        ret = mxSmlGetBoardPowerLimitConstraints(device_id, byref(minPowerLimit), byref(maxPowerLimit))
+        if ret == MxSmlReturn.MXSML_OperationNotSupport:
+            ret, board_limit = mxsml_get_board_power_limit(device_id)
+            return (ret, board_limit, board_limit)
+        else:
+            return (ret, minPowerLimit.value, maxPowerLimit.value)
+    else:
+        ret, board_limit = mxsml_get_board_power_limit(device_id)
+        return (ret, board_limit, board_limit)
+
+def mxsml_get_max_clock_frequency(device_id, ip: MxSmlDpmIp): # ret: (MxSmlReturn, int)
+    entrylist = []
+    clockInfo = (c_uint * 12)(*entrylist)
+    size = c_uint(12)
+    ret = mxSmlGetDpmIpClockInfo(device_id, ip, clockInfo, size)
+    if ret != MxSmlReturn.MXSML_Success:
+        return (ret, 0)
+    else:
+        return (ret, clockInfo[size.value - 1])
+
+def mxsml_get_pcie_max_link_info(device_id): # ret: (MxSmlReturn, int, int)
+    pcieInfo = MxSmlPcieInfo()
+    ret = mxSmlGetPcieMaxLinkInfo(device_id, byref(pcieInfo))
+    if ret != MxSmlReturn.MXSML_Success:
+        return (ret, 0, 0)
+    else:
+        return (ret, pcieInfo.speed, pcieInfo.width)
+
+def mxsml_get_die_hbm_bw_util(device_id, die_id): # ret: (MxSmlReturn, int)
+    if hasattr(_module, "mxSmlGetDieHbmBandwidthUtilization"):
+        utilization = c_uint(0)
+        ret = mxSmlGetDieHbmBandwidthUtilization(device_id, die_id, byref(utilization))
+        return (ret, utilization.value)
+    else:
+        return (MxSmlReturn.MXSML_OperationNotSupport, 0)
+
+def mxsml_get_die_driver_reserved_memory(device_id, die_id): # ret: (MxSmlReturn, int)
+    if hasattr(_module, "mxSmlGetDieDriverReservedMemory"):
+        reserved_memory = c_uint(0)
+        ret = mxSmlGetDieDriverReservedMemory(device_id, die_id, byref(reserved_memory))
+        return (ret, reserved_memory.value)
+    else:
+        return (MxSmlReturn.MXSML_OperationNotSupport, 0)
+
+def mxsml_get_pcie_error_counter(device_id, ip: MxSmlLinkErrorCounterType): # ret: (MxSmlReturn, int)
+    if hasattr(_module, "mxSmlGetPcieErrorCounter"):
+        counter_value = c_ulonglong(0)
+        ret = mxSmlGetPcieErrorCounter(device_id, ip, byref(counter_value))
+        return (ret, counter_value.value)
+    else:
+        return (MxSmlReturn.MXSML_OperationNotSupport, 0)
+
+def mxsml_get_mxlk_error_counter(device_id, ip: MxSmlLinkErrorCounterType): # ret: (MxSmlReturn, counters)
+    if hasattr(_module, "mxSmlGetMetaXLinkErrorCounter"):
+        link_size = c_uint(METAX_LINK_NUM)
+        entrylist = []
+        counter_value = (c_ulonglong * METAX_LINK_NUM)(*entrylist)
+        ret = mxSmlGetMetaXLinkErrorCounter(device_id, ip, byref(link_size), counter_value)
+        return (ret, [counter_value[i] for i in range(link_size.value)])
+    else:
+        return (MxSmlReturn.MXSML_OperationNotSupport, [])
+
+def mxsml_get_mma_usage_toggle(device_id): # ret: (MxSmlReturn, toggle)
+    if hasattr(_module, "mxSmlGetMmaUsageToggle"):
+        toggle = c_uint(0)
+        ret = mxSmlGetMmaUsageToggle(device_id, byref(toggle))
+        return (ret, toggle.value)
+    else:
+        return (MxSmlReturn.MXSML_OperationNotSupport, 0)
+
+def mxsml_set_mma_usage_toggle(device_id, toggle): # ret: MxSmlReturn
+    if hasattr(_module, "mxSmlSetMmaUsageToggle"):
+        return mxSmlSetMmaUsageToggle(device_id, toggle)
+    else:
+        return MxSmlReturn.MXSML_OperationNotSupport
+
+def mxsml_get_die_clock_throttle_duration(device_id, die_id, throttle_type: MxSmlClockThrottleType): # ret: (MxSmlReturn, duration)
+    if hasattr(_module, "mxSmlGetDieClocksThrottleDuration"):
+        duration = c_ulong(0)
+        ret = mxSmlGetDieClocksThrottleDuration(device_id, die_id, throttle_type, byref(duration))
+        return (ret, duration.value)
+    else:
+        return (MxSmlReturn.MXSML_OperationNotSupport, 0)

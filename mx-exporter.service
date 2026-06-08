@@ -1,0 +1,10 @@
+[Unit]
+Description=MetaX Exporter
+After=network.target
+
+[Service]
+ExecStart=mx-exporter -p 8000 -c /opt/maca/etc/default-counters.csv
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

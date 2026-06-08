@@ -93,6 +93,7 @@ class MxSmlDeviceBrand(c_uint):
     MXSML_Brand_N = 1
     MXSML_Brand_C = 2
     MXSML_Brand_G = 3
+    MXSML_Brand_X = 4
 
 class MxSmlDeviceVirtualizationMode(c_uint):
     MXSML_Virtualization_Mode_None = 0
@@ -165,6 +166,13 @@ class MxSmlUsageIp(c_uint):
     MXSML_Usage_Vpud = 2
     MXSML_Usage_G2d = 3           # only valid for N-class device
     MXSML_Usage_Xcore = 4         # only valid for C-class device
+    MXSML_Usage_Mma = 5           # only valid for C-class device
+
+class MxSmlLinkErrorCounterType(c_uint):
+    MXSML_Link_Error_Replay = 0
+    MXSML_Link_Error_Recovery = 1
+    MXSML_Link_Error_Crc = 2
+    MXSML_Link_Error_Max = 3
 
 class MxSmlDeviceInfo(Structure):
     _fields_ = [
@@ -334,6 +342,11 @@ class MxSmlMxlkPortState(c_uint):
     MXSML_Mxlk_Port_State_Down_Optical_NoUse = 4
     MXSML_Mxlk_Port_State_NoUse = 5
 
+class MxSmlClockThrottleType(c_uint):
+    MXSML_CLK_THROTTLE_OVER_CURRENT = 0
+    MXSML_CLK_THROTTLE_OVER_VOLTAGE = 1
+    MXSML_CLK_THROTTLE_POWER_BRAKE = 2
+
 class MxSmlPcieThroughput(Structure):
     _fields_ = [
         ("rx", c_int),
@@ -379,6 +392,23 @@ class MxSmlProcessInfo_v2(Structure):
         ("processGpuInfo", MxSmlProcessGpuInfo_v2*64)
     ]
 
+class MxSmlProcessGpuInfo_v3(Structure):
+    _fields_ = [
+        ("bdfId", c_char*32),
+        ("gpuId", c_uint),
+        ("gpuMemoryUsage", c_ulong),
+        ("dieId", c_uint),
+        ("sgpuId", c_uint)
+    ]
+
+class MxSmlProcessInfo_v3(Structure):
+    _fields_ = [
+        ("processId", c_uint),
+        ("processName", c_char*64),
+        ("gpuNumber", c_uint),
+        ("processGpuInfo", MxSmlProcessGpuInfo_v3*64)
+    ]
+
 class MxSmlMetaXLinkType(c_uint):
     MXSML_MetaXLink_Input = 0
     MXSML_MetaXLink_Target = 1
@@ -402,10 +432,16 @@ class MxSmlMetaXLinkAer(Structure):
     ]
 
 METAX_LINK_NUM=7
-class MxSmlMetaXLinkInfo(Structure):
+class MxSmlMetaXLinkInfo(Structure):    # deprecated
     _fields_ = [
         ("speed", c_float * METAX_LINK_NUM),
         ("width", c_uint * METAX_LINK_NUM)
+    ]
+
+class MxSmlSingleMetaXLinkInfo(Structure):
+    _fields_ = [
+        ("speed", c_float),
+        ("width", c_uint)
     ]
 
 class MxSmlPcieInfo(Structure):
@@ -486,6 +522,12 @@ class MxSmlEthThroughput(Structure):
         ("tx", c_int),
     ]
 
+class MxSmlLimitedDeviceIds(Structure):
+    _fields_ = [
+        ("number", c_int),
+        ("deviceId", c_int*128),
+    ]
+
 mxSmlInit = mxsml.mxSmlInit
 mxSmlInit.restype = c_uint
 
@@ -514,6 +556,14 @@ mxSmlGetVirtualDevicesByPhysicalId.restype = c_uint
 mxSmlGetDeviceInfo = mxsml.mxSmlGetDeviceInfo
 mxSmlGetDeviceInfo.argtypes = [DeviceId, POINTER(MxSmlDeviceInfo)]
 mxSmlGetDeviceInfo.restype = c_uint
+
+mxSmlGetAllLimitedDevices = mxsml.mxSmlGetAllLimitedDevices
+mxSmlGetAllLimitedDevices.argtypes = [POINTER(MxSmlLimitedDeviceIds)]
+mxSmlGetAllLimitedDevices.restype = c_uint
+
+mxSmlGetLimitedDeviceInfo = mxsml.mxSmlGetLimitedDeviceInfo
+mxSmlGetLimitedDeviceInfo.argtypes = [DeviceId, POINTER(MxSmlDeviceInfo)]
+mxSmlGetLimitedDeviceInfo.restype = c_uint
 
 mxSmlGetRasErrorData = mxsml.mxSmlGetRasErrorData
 mxSmlGetRasErrorData.argtypes = [DeviceId, POINTER(MxSmlRasErrorData)]
@@ -546,6 +596,10 @@ mxSmlGetHbmBandWidth.restype = c_uint
 mxSmlGetDieHbmBandWidth = mxsml.mxSmlGetDieHbmBandWidth
 mxSmlGetDieHbmBandWidth.argtypes = [DeviceId, DieId, POINTER(MxSmlHbmBandwidth)]
 mxSmlGetDieHbmBandWidth.restype = c_uint
+
+mxSmlGetDieHbmBandwidthUtilization = mxsml.mxSmlGetDieHbmBandwidthUtilization
+mxSmlGetDieHbmBandwidthUtilization.argtypes = [DeviceId, DieId, POINTER(c_uint)]
+mxSmlGetDieHbmBandwidthUtilization.restype = c_uint
 
 mxSmlGetMemoryInfo = mxsml.mxSmlGetMemoryInfo
 mxSmlGetMemoryInfo.argtypes = [DeviceId, POINTER(MxSmlMemoryInfo)]
@@ -607,6 +661,10 @@ mxSmlGetSingleGpuProcess_v2 = mxsml.mxSmlGetSingleGpuProcess_v2
 mxSmlGetSingleGpuProcess_v2.argtypes = [c_uint, POINTER(c_uint), POINTER(MxSmlProcessInfo_v2)]
 mxSmlGetSingleGpuProcess_v2.restype = c_uint
 
+mxSmlGetSingleGpuProcess_v3 = mxsml.mxSmlGetSingleGpuProcess_v3
+mxSmlGetSingleGpuProcess_v3.argtypes = [c_uint, POINTER(c_uint), POINTER(MxSmlProcessInfo_v3)]
+mxSmlGetSingleGpuProcess_v3.restype = c_uint
+
 mxSmlGetMetaXLinkBandwidth = mxsml.mxSmlGetMetaXLinkBandwidth
 linkSize = c_uint
 mxSmlGetMetaXLinkBandwidth.argtypes = [DeviceId, MxSmlMetaXLinkType, POINTER(linkSize), POINTER(MxSmlMetaXLinkBandwidth)]
@@ -622,24 +680,30 @@ linkSize = c_uint
 mxSmlGetMetaXLinkAer.argtypes = [DeviceId, POINTER(linkSize), POINTER(MxSmlMetaXLinkAer)]
 mxSmlGetMetaXLinkAer.restype = c_uint
 
+# deprecated
 mxSmlGetMetaXLinkInfo = mxsml.mxSmlGetMetaXLinkInfo
 mxSmlGetMetaXLinkInfo.argtypes = [DeviceId, POINTER(MxSmlMetaXLinkInfo)]
 mxSmlGetMetaXLinkInfo.restype = c_uint
 
+mxSmlGetMetaXLinkInfo_v2 = mxsml.mxSmlGetMetaXLinkInfo_v2
+linkSize = c_uint
+mxSmlGetMetaXLinkInfo_v2.argtypes = [DeviceId, POINTER(linkSize), POINTER(MxSmlSingleMetaXLinkInfo)]
+mxSmlGetMetaXLinkInfo_v2.restype = c_uint
+
 mxSmlGetDpmIpClockInfo = mxsml.mxSmlGetDpmIpClockInfo
-mxSmlGetDpmIpClockInfo.argtypes = [DeviceId, c_uint, POINTER(c_uint), POINTER(c_uint)]
+mxSmlGetDpmIpClockInfo.argtypes = [DeviceId, MxSmlDpmIp, POINTER(c_uint), POINTER(c_uint)]
 mxSmlGetDpmIpClockInfo.restype = c_uint
 
 mxSmlGetDpmIpVddInfo = mxsml.mxSmlGetDpmIpVddInfo
-mxSmlGetDpmIpVddInfo.argtypes = [DeviceId, c_uint, POINTER(c_uint), POINTER(c_uint)]
+mxSmlGetDpmIpVddInfo.argtypes = [DeviceId, MxSmlDpmIp, POINTER(c_uint), POINTER(c_uint)]
 mxSmlGetDpmIpVddInfo.restype = c_uint
 
 mxSmlGetCurrentDpmIpPerfLevel = mxsml.mxSmlGetCurrentDpmIpPerfLevel
-mxSmlGetCurrentDpmIpPerfLevel.argtypes = [DeviceId, c_uint, POINTER(c_uint)]
+mxSmlGetCurrentDpmIpPerfLevel.argtypes = [DeviceId, MxSmlDpmIp, POINTER(c_uint)]
 mxSmlGetCurrentDpmIpPerfLevel.restype = c_uint
 
 mxSmlGetCurrentDieDpmIpPerfLevel = mxsml.mxSmlGetCurrentDieDpmIpPerfLevel
-mxSmlGetCurrentDieDpmIpPerfLevel.argtypes = [DeviceId, DieId, c_uint, POINTER(c_uint)]
+mxSmlGetCurrentDieDpmIpPerfLevel.argtypes = [DeviceId, DieId, MxSmlDpmIp, POINTER(c_uint)]
 mxSmlGetCurrentDieDpmIpPerfLevel.restype = c_uint
 
 mxSmlGetDeviceVersion = mxsml.mxSmlGetDeviceVersion
@@ -701,6 +765,10 @@ mxSmlGetDieCurrentClocksThrottleReason.restype = c_uint
 mxSmlGetBoardPowerLimit = mxsml.mxSmlGetBoardPowerLimit
 mxSmlGetBoardPowerLimit.argtypes = [DeviceId, POINTER(c_uint)]
 mxSmlGetBoardPowerLimit.restype = c_uint
+
+mxSmlGetBoardPowerLimitConstraints = mxsml.mxSmlGetBoardPowerLimitConstraints
+mxSmlGetBoardPowerLimitConstraints.argtypes = [DeviceId, POINTER(c_uint), POINTER(c_uint)]
+mxSmlGetBoardPowerLimitConstraints.restype = c_uint
 
 mxSmlGetMetaXLinkState = mxsml.mxSmlGetMetaXLinkState
 mxSmlGetMetaXLinkState.argTypes = [DeviceId, POINTER(MxSmlMetaXLinkState), POINTER(c_char), POINTER(c_uint)]
@@ -778,12 +846,626 @@ mxSmlGetEthThroughput = mxsml.mxSmlGetEthThroughput
 mxSmlGetEthThroughput.argtypes = [DeviceId, POINTER(MxSmlEthThroughput)]
 mxSmlGetEthThroughput.restype = c_uint
 
+mxSmlGetDieDriverReservedMemory = mxsml.mxSmlGetDieDriverReservedMemory
+mxSmlGetDieDriverReservedMemory.argtypes = [DeviceId, DieId, POINTER(c_uint)]
+mxSmlGetDieDriverReservedMemory.restype = c_uint
+
+mxSmlGetPcieErrorCounter = mxsml.mxSmlGetPcieErrorCounter
+mxSmlGetPcieErrorCounter.argtypes = [DeviceId, MxSmlLinkErrorCounterType, POINTER(c_ulonglong)]
+mxSmlGetPcieErrorCounter.restype = c_uint
+
+mxSmlGetMetaXLinkErrorCounter = mxsml.mxSmlGetMetaXLinkErrorCounter
+mxSmlGetMetaXLinkErrorCounter.argtypes = [DeviceId, MxSmlLinkErrorCounterType, POINTER(c_uint), POINTER(c_ulonglong)]
+mxSmlGetMetaXLinkErrorCounter.restype = c_uint
+
+mxSmlGetMmaUsageToggle = mxsml.mxSmlGetMmaUsageToggle
+mxSmlGetMmaUsageToggle.argtypes = [DeviceId, POINTER(c_uint)]
+mxSmlGetMmaUsageToggle.restype = c_uint
+
+mxSmlGetDieMmaUsageToggle = mxsml.mxSmlGetDieMmaUsageToggle
+mxSmlGetDieMmaUsageToggle.argtypes = [DeviceId, DieId, POINTER(c_uint)]
+mxSmlGetDieMmaUsageToggle.restype = c_uint
+
+mxSmlSetMmaUsageToggle = mxsml.mxSmlSetMmaUsageToggle
+mxSmlSetMmaUsageToggle.argtypes = [DeviceId, c_int]
+mxSmlSetMmaUsageToggle.restype = c_uint
+
+mxSmlSetDieMmaUsageToggle = mxsml.mxSmlSetDieMmaUsageToggle
+mxSmlSetDieMmaUsageToggle.argtypes = [DeviceId, c_int]
+mxSmlSetDieMmaUsageToggle.restype = c_uint
+
+mxSmlGetDieClocksThrottleDuration = mxsml.mxSmlGetDieClocksThrottleDuration
+mxSmlGetDieClocksThrottleDuration.argtypes = [DeviceId, DieId, MxSmlClockThrottleType, POINTER(c_ulong)]
+mxSmlGetDieClocksThrottleDuration.restype = c_uint
+
 if __name__ == "__main__":
+    head_len = 40
+
     def PrintStructure(s):
         for field in s._fields_:
             print (field[0], getattr(s, field[0]))
 
+    def demo_get_maca_version():
+        size = c_uint(64)
+        entrylist = []
+        macaVersion = (c_char * 64)(*entrylist)
+        ret = mxSmlGetMacaVersion(macaVersion, size)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMacaVersion failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetMacaVersion", head_len, macaVersion.value.decode('ASCII')))
+
+    def demo_get_server_info():
+        entrylist = []
+        localUuid = (c_char * 64)(*entrylist)
+        remoteUuid1 = (c_char * 64)(*entrylist)
+        remoteUuid2 = (c_char * 64)(*entrylist)
+        remotes = (POINTER(c_char)*2)(*[remoteUuid1, remoteUuid2])
+        remotesSize = c_uint(2)
+        uuidSize = c_uint(64)
+        ret = mxSmlGetLocalAndMultipleRemoteUuid(localUuid, remotes, byref(remotesSize), byref(uuidSize))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetLocalAndMultipleRemoteUuid failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print(
+                "{:{}}: local_uuid({}), remotesSize({}), remoteUuid1({}), remoteUuid2({})".format(
+                    "mxSmlGetLocalAndMultipleRemoteUuid",
+                    head_len,
+                    localUuid.value.decode('ASCII'),
+                    remotesSize.value,
+                    remoteUuid1.value.decode('ASCII'),
+                    remoteUuid2.value.decode('ASCII')
+                )
+            )
+
+    def demo_get_device_info(device_id):
+        device_info = MxSmlDeviceInfo()
+        ret = mxSmlGetDeviceInfo(device_id, byref(device_info))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDeviceInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print(
+                "{:{}}: {}  {} (UUID: {})".format(
+                    "mxSmlGetDeviceInfo",
+                    head_len,
+                    device_info.deviceName.decode('ASCII'),
+                    device_info.bdfId.decode('ASCII'),
+                    device_info.uuid.decode('ASCII'),
+                )
+            )
+
+    def demo_get_device_state(device_id):
+        deviceState = c_int(0)
+        ret = mxSmlGetDeviceState(device_id, deviceState)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDeviceState failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDeviceState", head_len, deviceState.value))
+
+    def demo_get_board_serial(device_id):
+        size = c_uint(32)
+        entrylist = []
+        boardSerial = (c_char * 32)(*entrylist)
+        ret = mxSmlGetBoardSerial(device_id, boardSerial, byref(size))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetBoardSerial failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetBoardSerial", head_len, boardSerial.value.decode('ASCII')))
+
+    def demo_get_device_isa_version(device_id):
+        isaVersion = c_int(0)
+        ret = mxSmlGetDeviceIsaVersion(device_id, byref(isaVersion))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDeviceIsaVersion failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDeviceIsaVersion", head_len, isaVersion.value))
+
+    def demo_get_temperature_info(device_id):
+        temperature = c_int(0)
+        tempType = MxSmlTemperatureSensors.MXSML_Temperature_Soc
+        ret = mxSmlGetTemperatureInfo(device_id, tempType, temperature)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetTemperatureInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: soc({:.2f} C)".format("mxSmlGetTemperatureInfo", head_len, temperature.value/100))
+
+    def demo_get_board_power_info(device_id):
+        entryBoardInfo = []
+        boardPower = (MxSmlBoardWayElectricInfo* 3)(*entryBoardInfo)
+        BoardWaySize = c_uint(3)
+        ret = mxSmlGetBoardPowerInfo(device_id, BoardWaySize, boardPower)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetBoardPowerInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            i = 0
+            power_total = sum([boardPower[i].power for i in range(BoardWaySize.value)])
+            print("{:{}}: total({:.3f} W)".format("mxSmlGetBoardPowerInfo", head_len, power_total/1000))
+
+    def demo_get_board_power_limit(device_id):
+        powerLimit = c_uint(0)
+        ret = mxSmlGetBoardPowerLimit(device_id, byref(powerLimit))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetBoardPowerLimit failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {} W".format("mxSmlGetBoardPowerLimit", head_len, powerLimit.value/1000))
+
+    def demo_get_board_power_limit_constraints(device_id):
+        minPowerLimit = c_uint(0)
+        maxPowerLimit = c_uint(0)
+        ret = mxSmlGetBoardPowerLimitConstraints(device_id, byref(minPowerLimit), byref(maxPowerLimit))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetBoardPowerLimitConstraints failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {} W - {} W".format(
+                "mxSmlGetBoardPowerLimitConstraints", head_len, minPowerLimit.value/1000, maxPowerLimit.value/1000))
+
+    def demo_get_pcie_throughput(device_id):
+        pcieThroughput = MxSmlPcieThroughput()
+        ret = mxSmlGetPcieThroughput(device_id, byref(pcieThroughput))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetPcieThroughput failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: TX({} MB/s), RX({} MB/s)".format("mxSmlGetPcieThroughput", head_len, pcieThroughput.tx, pcieThroughput.rx))
+
+    def demo_get_pcie_info(device_id):
+        pcieInfo = MxSmlPcieInfo()
+        ret = mxSmlGetPcieInfo(device_id, byref(pcieInfo))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetPcieInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: speed({} GT/s), width(x{})".format("mxSmlGetPcieInfo", head_len, pcieInfo.speed, pcieInfo.width))
+
+    def demo_get_pcie_bridge_info(device_id):
+        pcieInfo = MxSmlPcieInfo()
+        ret = mxSmlGetPcieMaxLinkInfo(device_id, byref(pcieInfo))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetPcieMaxLinkInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: speed({} GT/s), width(x{})".format("mxSmlGetPcieMaxLinkInfo", head_len, pcieInfo.speed, pcieInfo.width))
+
+    def demo_get_pci_event(ip_name, ip_unit, device_id):
+        entrylist = []
+        eventInfo = (MxSmlPciEventInfo*2)(*entrylist)
+        size = c_uint(2)
+        ret = mxSmlGetPciEventInfo(device_id, ip_unit, eventInfo, byref(size))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetPciEventInfo {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: ip({}), size({})".format("mxSmlGetPciEventInfo", head_len, ip_name, size.value))
+            for i in range(size.value):
+                print("  bitNumber({}), count({}), firstTime({}), name({})".format(
+                    eventInfo[i].bitNumber, eventInfo[i].count,
+                    eventInfo[i].firstTime.decode('ASCII'), eventInfo[i].name.decode('ASCII')))
+
+    def demo_get_pci_link_error_counter(counter_name, counter_type, device_id):
+        counter_value = c_ulonglong(0)
+        ret = mxSmlGetPcieErrorCounter(device_id, counter_type, byref(counter_value))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetPcieErrorCounter {} failed: {}".format(counter_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: type({}), counter({})".format("mxSmlGetPcieErrorCounter", head_len, counter_name, counter_value.value))
+
+    def demo_get_dpm_clock_info(ip_name, ip_unit, device_id):
+        entrylist = []
+        clockInfo = (c_uint * 12)(*entrylist)
+        size = c_uint(12)
+        ret = mxSmlGetDpmIpClockInfo(device_id, ip_unit, clockInfo, size)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDpmIpClockInfo {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDpmIpClockInfo", head_len,
+                                     ", ".join(["{}[{}]({} MHz)".format(ip_name, i, clockInfo[i]) for i in range(size.value)])))
+
+    def demo_get_dpm_voltage_info(ip_name, ip_unit, device_id):
+        entrylist = []
+        voltageInfo = (c_uint * 12)(*entrylist)
+        size = c_uint(12)
+        ret = mxSmlGetDpmIpVddInfo(device_id, ip_unit, voltageInfo, size)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDpmIpVddInfo {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDpmIpVddInfo", head_len,
+                                     ", ".join(["{}[{}]({} V)".format(ip_name, i, voltageInfo[i]) for i in range(size.value)])))
+
+    def demo_get_topology_info(device_id):
+        topoInfo = MxSmlMetaXLinkTopo()
+        ret = mxSmlGetMetaXLinkTopo(device_id, byref(topoInfo))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkTopo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: topology_id({}), socket_id({}), die_id({})".format(
+                "mxSmlGetMetaXLinkTopo", head_len, topoInfo.topologyId, topoInfo.socketId, topoInfo.dieId))
+
+    def demo_get_fw_log_level(ip_name, ip_unit, device_id):
+        loglevel = c_uint(0)
+        ret = mxSmlGetFwIpLoglevel(device_id, ip_unit, loglevel)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetFwIpLoglevel for {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}({})".format("mxSmlGetFwIpLoglevel", head_len, ip_name, loglevel.value))
+
+    def demo_get_pci_mmio_state(device_id):
+        state = c_uint()
+        ret = mxSmlGetPciMmioState(device_id, byref(state))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetPciMmioState failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetPciMmioState", head_len, state.value))
+
+    def demo_get_om_temperature_info(device_id):
+        size = c_uint(3)
+        entrylist = []
+        opticalModuleStatus = (MxSmlOpticalModuleStatus*3)(*entrylist)
+        ret = mxSmlGetOpticalModuleStatus(device_id, opticalModuleStatus, byref(size))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetOpticalModuleStatus failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("mxSmlGetOpticalModuleStatus:")
+            i = 0
+            while i < size.value:
+                PrintStructure(opticalModuleStatus[i])
+                i += 1
+
+    def demo_get_mxlk_state(device_id):
+        mxlkStateCode = MxSmlMetaXLinkState(MxSmlMetaXLinkState.MXSML_MetaXLink_State_Enabled)
+        entrylist = []
+        mxlkState = (c_char * 128)(*entrylist)
+        size = c_uint(128)
+        ret = mxSmlGetMetaXLinkState(device_id, byref(mxlkStateCode), mxlkState, byref(size))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkState failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: mxlkStateCode({}), mxlkState({})".format(
+                "mxSmlGetMetaXLinkState", head_len, mxlkStateCode, mxlkState.value.decode('ASCII')))
+
+    def demo_get_mxlk_port_state(device_id):
+        entrylist = []
+        mxlkPortState = (MxSmlMxlkPortState * 7)(*entrylist)
+        size = c_uint(7)
+        ret = mxSmlGetMetaXLinkPortState(device_id, mxlkPortState, byref(size))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkPortState failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format(
+                "mxSmlGetMetaXLinkPortState", head_len,
+                ", ".join(["PORT#{}({})".format(i + 1, mxlkPortState[i].value) for i in range(size.value)])))
+
+    def demo_get_mxlk_info(device_id):
+        entryLinklist = []
+        mxlkInfo = (MxSmlSingleMetaXLinkInfo* 7)(*entryLinklist)
+        linkSize = c_uint(7)
+        ret = mxSmlGetMetaXLinkInfo_v2(device_id, linkSize, mxlkInfo)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkInfo_v2 failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("mxSmlGetMetaXLinkInfo_v2:")
+            for i in range(linkSize.value):
+                print("  PORT#{}:  speed({} GT/s), width(x{})".format(i + 1, mxlkInfo[i].speed, mxlkInfo[i].width))
+
+    def demo_get_mxlk_bandwidth(device_id):
+        state = True
+        entryLinklist = []
+        mxlkRxBw = (MxSmlMetaXLinkBandwidth* 7)(*entryLinklist)
+        linkSize = c_uint(7)
+        ret = mxSmlGetMetaXLinkBandwidth(device_id, MxSmlMetaXLinkType.MXSML_MetaXLink_Input, linkSize, mxlkRxBw)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkBandwidth input failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+            state = False
+
+        mxlkTxBw = (MxSmlMetaXLinkBandwidth* 7)(*entryLinklist)
+        linkSize = c_uint(7)
+        ret = mxSmlGetMetaXLinkBandwidth(device_id, MxSmlMetaXLinkType.MXSML_MetaXLink_Target, linkSize, mxlkTxBw)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkBandwidth target failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+            state = False
+
+        if state:
+            print("mxSmlGetMetaXLinkBandwidth:")
+            for i in range(linkSize.value):
+                print("  PORT#{}:  RX({} MB/s), TX({} MB/s)".format(i + 1, mxlkRxBw[i].requestBandwidth, mxlkTxBw[i].requestBandwidth))
+
+    def demo_get_mxlk_traffic_stat(device_id):
+        state = True
+        entryLinklist = []
+        mxlkRxTrafficStat = (MxSmlMetaXLinkTrafficStat* 7)(*entryLinklist)
+        linkSize = c_uint(7)
+        ret = mxSmlGetMetaXLinkTrafficStat(device_id, MxSmlMetaXLinkType.MXSML_MetaXLink_Input, linkSize, mxlkRxTrafficStat)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkTrafficStat failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+            state = False
+
+        mxlkTxTrafficStat = (MxSmlMetaXLinkTrafficStat* 7)(*entryLinklist)
+        linkSize = c_uint(7)
+        ret = mxSmlGetMetaXLinkTrafficStat(device_id, MxSmlMetaXLinkType.MXSML_MetaXLink_Target, linkSize, mxlkTxTrafficStat)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkTrafficStat failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+            state = False
+
+        if state:
+            print("mxSmlGetMetaXLinkTrafficStat:")
+            for i in range(linkSize.value):
+                print("  PORT#{}:  RX({} Bytes), TX({} Bytes)".format(
+                    i + 1, mxlkRxTrafficStat[i].requestTrafficStat, mxlkTxTrafficStat[i].requestTrafficStat))
+
+    def demo_get_mxlk_aer(device_id):
+        entryLinklist = []
+        metaxLinkAer = (MxSmlMetaXLinkAer* 7)(*entryLinklist)
+        linkSize = c_uint(7)
+        ret = mxSmlGetMetaXLinkAer(device_id, linkSize, metaxLinkAer)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkAer failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("mxSmlGetMetaXLinkAer:")
+            for i in range(linkSize.value):
+                print("  PORT#{}:  CE({}), UE({})".format(i + 1, metaxLinkAer[i].ceAer, metaxLinkAer[i].ueAer))
+
+    def demo_get_mxlk_error_counter(counter_name, counter_type, device_id):
+        entryLinklist = []
+        counter_value = (c_ulonglong * METAX_LINK_NUM)(*entryLinklist)
+        linkSize = c_uint(METAX_LINK_NUM)
+        ret = mxSmlGetMetaXLinkErrorCounter(device_id, counter_type, byref(linkSize), counter_value)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkErrorCounter {} failed: {}".format(counter_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("mxSmlGetMetaXLinkErrorCounter({}):".format(counter_name))
+            for i in range(linkSize.value):
+                print("  PORT#{}:  {}".format(i + 1, counter_value[i]))
+
+    def demo_get_eth_throughput(device_id):
+        ethThroughput = MxSmlEthThroughput()
+        ret = mxSmlGetEthThroughput(device_id, byref(ethThroughput))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetEthThroughput failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: TX({} MB/s), RX({} MB/s)".format("mxSmlGetEthThroughput", head_len, ethThroughput.tx, ethThroughput.rx))
+
+    def demo_get_die_version(ip_name, ip_unit, device_id, die_id):
+        size = c_uint(64)
+        entrylist = []
+        version = (c_char * 64)(*entrylist)
+        ret = mxSmlGetDeviceDieVersion(device_id, die_id, ip_unit, version, size)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDeviceVersion {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}({})".format("mxSmlGetDeviceVersion", head_len, ip_name, version.value.decode('ASCII')))
+
+    def demo_get_die_unavailable_reason(device_id, die_id):
+        unavailable_reason = MxSmlDeviceUnavailableReasonInfo()
+        ret = mxSmlGetDieUnavailableReason(device_id, die_id, byref(unavailable_reason))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieUnavailableReason failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: code({}), reason({})".format(
+                "mxSmlGetDieUnavailableReason", head_len,
+                unavailable_reason.unavailableCode, unavailable_reason.unavailableReason.decode('ASCII')))
+
+    def demo_get_die_temperature_info(ip_name, ip_unit, device_id, die_id):
+        temperature = c_int(0)
+        ret = mxSmlGetDieTemperatureInfo(device_id, die_id, ip_unit, temperature)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieTemperatureInfo {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+            state = False
+        else:
+            print("{:{}}: {}({:.2f} C)".format("mxSmlGetDieTemperatureInfo", head_len, ip_name, temperature.value/100))
+
+    def demo_get_die_usage_info(ip_name, ip_unit, device_id, die_id):
+        usage = c_int(0)
+        ret = mxSmlGetDieIpUsage(device_id, die_id, ip_unit, usage)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieIpUsage {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}({} %)".format("mxSmlGetDieIpUsage", head_len, ip_name, usage.value))
+
+    def demo_get_die_memory_info(device_id, die_id):
+        memory = MxSmlMemoryInfo()
+        ret = mxSmlGetDieMemoryInfo(device_id, die_id, byref(memory))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieMemoryInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: vram(used({} KB), total({} KB)), xtt(used({} KB), total({} KB))".format(
+                "mxSmlGetDieMemoryInfo", head_len, memory.vramUse, memory.vramTotal, memory.xttUse, memory.xttTotal))
+
+    def demo_get_die_pmbus_info(ip_name, ip_unit, device_id, die_id):
+        pmbusInfo = MxSmlPmbusInfo()
+        ret = mxSmlGetDiePmbusInfo(device_id, die_id, ip_unit, byref(pmbusInfo))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDiePmbusInfo {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}({:.3f} W)".format("mxSmlGetDiePmbusInfo", head_len, ip_name, pmbusInfo.power/1000))
+
+    def demo_get_die_clock_info(ip_name, ip_unit, device_id, die_id):
+        clocksSize = c_uint(8)
+        clocksMhz = (c_uint * 2)()
+        ret = mxSmlGetDieClocks(device_id, die_id, ip_unit, clocksSize, clocksMhz)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetClocks {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}(size({}), clock({} MHz))".format("mxSmlGetClocks", head_len, ip_name, clocksSize.value, clocksMhz[0]))
+
+    def demo_get_die_hbm_bandwidth(device_id, die_id):
+        hbmBw = MxSmlHbmBandwidth()
+        ret = mxSmlGetDieHbmBandWidth(device_id, die_id, byref(hbmBw))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetHbmBandWidth failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {} MB/s".format("mxSmlGetHbmBandWidth", head_len, hbmBw.hbmBandwidthRespTotal))
+
+    def demo_get_die_hbm_bandwidth_utilization(device_id, die_id):
+        utilization = c_uint(0)
+        ret = mxSmlGetDieHbmBandwidthUtilization(device_id, die_id, utilization)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieHbmBandwidthUtilization failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {} %".format("mxSmlGetDieHbmBandwidthUtilization", head_len, utilization.value))
+
+    def demo_get_die_dpm_level(device_id, die_id):
+        dpmIp = MxSmlDpmIp.MXSML_Dpm_Xcore
+        dpmIpPerfLevel = c_uint(0)
+        ret = mxSmlGetCurrentDieDpmIpPerfLevel(device_id, die_id, dpmIp, dpmIpPerfLevel)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetCurrentDpmIpPerfLevel xcore failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: xcore({})".format("mxSmlGetCurrentDpmIpPerfLevel", head_len, dpmIpPerfLevel.value))
+
+    def demo_get_die_process_info(device_id, die_id):
+        entrylist = []
+        processNumber = c_uint(32)
+        processInfo = (MxSmlProcessInfo_v2*32)(*entrylist)
+        ret = mxSmlGetSingleGpuProcess_v2(device_id, processNumber, processInfo)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetSingleGpuProcess_v2 failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            number = 0
+            for idx, process in enumerate(processInfo):
+                if idx == processNumber.value:
+                    break
+                for gpu_idx, gpu_info in enumerate(process.processGpuInfo):
+                    if gpu_idx == process.gpuNumber:
+                        break
+                    if gpu_info.gpuId == device_id and gpu_info.dieId == die_id:
+                        number += 1
+                        break
+            print("{:{}}: process_number({})".format("mxSmlGetSingleGpuProcess_v2", head_len, number))
+
+    def demo_get_die_clk_tr(device_id, die_id):
+        clocksThrottleReason = c_ulonglong(0)
+        ret = mxSmlGetDieCurrentClocksThrottleReason(device_id, die_id, byref(clocksThrottleReason))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieCurrentClocksThrottleReason failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDieCurrentClocksThrottleReason", head_len, clocksThrottleReason.value))
+
+    def demo_get_die_ecc_count(device_id, die_id):
+        ecc = MxSmlEccErrorCount()
+        ret = mxSmlGetDieTotalEccErrors(device_id, die_id, byref(ecc))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieTotalEccErrors failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: sramCE({}), sramUE({}), dramCE({}), dramUE({}), retiredPage({})".format(
+                "mxSmlGetDieTotalEccErrors", head_len, ecc.sramCE, ecc.sramUE, ecc.dramCE, ecc.dramUE, ecc.retiredPage))
+
+    def demo_get_die_ras_count(device_id, die_id):
+        device_RasErrorData = MxSmlRasErrorData()
+        ret = mxSmlGetDieRasErrorData(device_id, die_id, byref(device_RasErrorData))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieRasErrorData failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: size({})".format("mxSmlGetDieRasErrorData", head_len, device_RasErrorData.showRasErrorSize))
+
+    def demo_get_die_ras_status(device_id, die_id):
+        device_RasStatusData = MxSmlRasStatusData()
+        ret = mxSmlGetDieRasStatusData(device_id, die_id, byref(device_RasStatusData))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieRasStatusData failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: size({})".format("mxSmlGetDieRasStatusData", head_len, device_RasStatusData.showRasStatusSize))
+
+    def demo_get_die_driver_reserved_memory(device_id, die_id):
+        reserved_memory = c_uint(0)
+        ret = mxSmlGetDieDriverReservedMemory(device_id, die_id, byref(reserved_memory))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieDriverReservedMemory failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDieDriverReservedMemory", head_len, reserved_memory.value))
+
+    def demo_get_die_mma_usage_toggle(device_id, die_id):
+        toggle = c_uint(0)
+        ret = mxSmlGetDieMmaUsageToggle(device_id, die_id, byref(toggle))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieMmaUsageToggle failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDieMmaUsageToggle", head_len, toggle.value))
+
+    def demo_get_die_clock_throttle_duration(ip_name, ip_unit, device_id, die_id):
+        duration = c_ulong()
+        ret = mxSmlGetDieClocksThrottleDuration(device_id, die_id, ip_unit, byref(duration))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDieClocksThrottleDuration {} failed: {}".format(ip_name, mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}({} us)".format("mxSmlGetDieClocksThrottleDuration", head_len, ip_name, duration.value))
+
+    def demo_get_sgpu_timeslice(device_id):
+        timeslice = c_uint(0)
+        ret = mxSmlGetDeviceTimeslice(device_id, byref(timeslice))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDeviceTimeslice failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetDeviceTimeslice", head_len, timeslice.value))
+
+    def demo_get_sgpu_info(device_id, sgpu_id):
+        sgpuInfo = MxSmlSgpuInfo()
+        ret = mxSmlGetSgpuInfo(device_id, sgpu_id, byref(sgpuInfo))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetSgpuInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {} %  {}gb (UUID: {})".format(
+                "mxSmlGetSgpuInfo", head_len, sgpuInfo.computeQuota, sgpuInfo.vramQuota / 1024, sgpuInfo.uuid.decode('ASCII')))
+
+    def demo_get_sgpu_usage(device_id, sgpu_id):
+        usage = c_int(0)
+        ret = mxSmlGetSgpuUsage(device_id, sgpu_id, byref(usage))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetSgpuUsage failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetSgpuUsage", head_len, usage.value))
+
+    def demo_get_sgpu_memory_info(device_id, sgpu_id):
+        memory = MxSmlSgpuMemoryInfo()
+        ret = mxSmlGetSgpuMemory(device_id, sgpu_id, byref(memory))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetSgpuMemory failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: total({} bytes), used({} bytes), free({} bytes))".format(
+                "mxSmlGetSgpuMemory", head_len, memory.total, memory.used, memory.free))
+
+    def demo_get_sgpu_alias(device_id, sgpu_id):
+        size = c_uint(32)
+        entrylist = []
+        alias = (c_char * 32)(*entrylist)
+        ret = mxSmlGetSgpuAlias(device_id, sgpu_id, alias, byref(size))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetSgpuAlias failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetSgpuAlias", head_len, alias.value.decode('ASCII')))
+
+    def demo_get_sgpu_annotations_id(device_id, sgpu_id):
+        size = c_uint(96)
+        entrylist = []
+        annotations_id = (c_char * 96)(*entrylist)
+        ret = mxSmlGetSgpuAnnotationsId(device_id, sgpu_id, annotations_id, byref(size))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetSgpuAnnotationsId failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print("{:{}}: {}".format("mxSmlGetSgpuAnnotationsId", head_len, annotations_id.value.decode('ASCII')))
+
+    def demo_get_limited_devices_info(device_id):
+        limited_device_info = MxSmlDeviceInfo()
+        ret = mxSmlGetLimitedDeviceInfo(device_id, byref(limited_device_info))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetLimitedDeviceInfo failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
+        else:
+            print(
+                "{:{}}: {}  {}".format(
+                    "mxSmlGetLimitedDeviceInfo",
+                    head_len,
+                    limited_device_info.deviceName.decode('ASCII'),
+                    limited_device_info.bdfId.decode('ASCII')
+                )
+            )
+
     ret = mxSmlInit()
+    # limited devices
+    limited_device_ids = MxSmlLimitedDeviceIds()
+    ret = mxSmlGetAllLimitedDevices(byref(limited_device_ids))
+    if ret != MxSmlReturn.MXSML_Success:
+        print("mxSmlGetAllLimitedDevices failed: %s" % mxSmlGetErrorString(ret).decode('ASCII'))
+    else:
+        print("limited devices count: %d" % limited_device_ids.number)
+        for i in range(limited_device_ids.number):
+            device_id = limited_device_ids.deviceId[i]
+            print("limited device id: %d" % device_id)
+            demo_get_limited_devices_info(device_id)
+
     if ret != MxSmlReturn.MXSML_Success:
         print("mxsml init failed: %s" % mxSmlGetErrorString(ret).decode('ASCII'))
         exit(1)
@@ -793,551 +1475,103 @@ if __name__ == "__main__":
         print("mxSmlInitWithFlags failed: %s" % mxSmlGetErrorString(ret).decode('ASCII'))
         exit(1)
 
-    size = c_uint(64)
-    entrylist = []
-    macaVersion = (c_char * 64)(*entrylist)
-    ret = mxSmlGetMacaVersion(macaVersion, size)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMacaVersion failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMacaVersion success: " + macaVersion.value.decode('ASCII'))
+    demo_get_maca_version()
+    demo_get_server_info()
 
-    deviceNum = mxSmlGetDeviceCount()
-    print("mxSmlGetDeviceCount: " + str(deviceNum))
+    device_count = mxSmlGetDeviceCount()
+    print("mxSmlGetDeviceCount: " + str(device_count))
 
-    if deviceNum < 1:
-        exit(0)
+    for device_id in range(device_count):
+        print("{} GPU#{} {}".format("=" * head_len, device_id, "=" * head_len))
+        demo_get_device_info(device_id)
+        demo_get_device_state(device_id)
+        demo_get_board_serial(device_id)
+        demo_get_device_isa_version(device_id)
+        demo_get_temperature_info(device_id)
+        demo_get_board_power_info(device_id)
+        demo_get_board_power_limit(device_id)
+        demo_get_board_power_limit_constraints(device_id)
+        demo_get_pcie_throughput(device_id)
+        demo_get_pcie_info(device_id)
+        demo_get_pcie_bridge_info(device_id)
+        demo_get_topology_info(device_id)
+        demo_get_fw_log_level("smp0", MxSmlFwIp.MXSML_Fw_IpName_SMP0, device_id)
+        demo_get_pci_event("aer_ue", MxSmlPciEventType.MXSML_Pci_Event_AER_UE, device_id)
+        demo_get_pci_event("aer_ce", MxSmlPciEventType.MXSML_Pci_Event_AER_CE, device_id)
+        demo_get_pci_event("synfld", MxSmlPciEventType.MXSML_Pci_Event_SYNFLD, device_id)
+        demo_get_pci_event("dbe", MxSmlPciEventType.MXSML_Pci_Event_DBE, device_id)
+        demo_get_pci_event("mmio", MxSmlPciEventType.MXSML_Pci_Event_MMIO, device_id)
+        demo_get_pci_link_error_counter("CRC", MxSmlLinkErrorCounterType.MXSML_Link_Error_Crc, device_id)
+        demo_get_pci_link_error_counter("REPLAY", MxSmlLinkErrorCounterType.MXSML_Link_Error_Replay, device_id)
+        demo_get_pci_link_error_counter("RECOVERY", MxSmlLinkErrorCounterType.MXSML_Link_Error_Recovery, device_id)
+        demo_get_dpm_clock_info("mc", MxSmlDpmIp.MXSML_Dpm_Mc, device_id)
+        demo_get_dpm_voltage_info("mc", MxSmlDpmIp.MXSML_Dpm_Mc, device_id)
+        demo_get_pci_mmio_state(device_id)
+        demo_get_om_temperature_info(device_id)
+        demo_get_mxlk_state(device_id)
+        demo_get_mxlk_port_state(device_id)
+        demo_get_mxlk_info(device_id)
+        demo_get_mxlk_bandwidth(device_id)
+        demo_get_mxlk_traffic_stat(device_id)
+        demo_get_mxlk_aer(device_id)
+        demo_get_mxlk_error_counter("CRC", MxSmlLinkErrorCounterType.MXSML_Link_Error_Crc, device_id)
+        demo_get_mxlk_error_counter("REPLAY", MxSmlLinkErrorCounterType.MXSML_Link_Error_Replay, device_id)
+        demo_get_mxlk_error_counter("RECOVERY", MxSmlLinkErrorCounterType.MXSML_Link_Error_Recovery, device_id)
+        demo_get_eth_throughput(device_id)
 
-    device_id = 0
-    die_id = 0
-
-    temperature = c_int(0)
-    tempType = MxSmlTemperatureSensors.MXSML_Temperature_Core
-    ret = mxSmlGetTemperatureInfo(device_id, tempType, temperature)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetTemperatureInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetTemperatureInfo success")
-        print("mxSmlGetTemperatureInfo {}".format(temperature))
-
-    ret = mxSmlGetDieTemperatureInfo(device_id, die_id, tempType, temperature)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDieTemperatureInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDieTemperatureInfo success")
-        print("mxSmlGetDieTemperatureInfo {}".format(temperature))
-
-    memory = MxSmlMemoryInfo()
-    ret = mxSmlGetMemoryInfo(device_id, byref(memory))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMemoryInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMemoryInfo success")
-        PrintStructure(memory)
-
-    ret = mxSmlGetDieMemoryInfo(device_id, die_id, byref(memory))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDieMemoryInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDieMemoryInfo success")
-        PrintStructure(memory)
-
-    device_info = MxSmlDeviceInfo()
-    ret = mxSmlGetDeviceInfo(device_id, byref(device_info))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDeviceInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDeviceInfo success: " + device_info.deviceName.decode('ASCII'))
-
-    device_RasErrorData = MxSmlRasErrorData()
-    ret = mxSmlGetRasErrorData(device_id, byref(device_RasErrorData))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetRasErrorData failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetRasErrorData success")
-        PrintStructure(device_RasErrorData)
-
-    device_RasStatusData = MxSmlRasStatusData()
-    ret = mxSmlGetRasStatusData(device_id, byref(device_RasStatusData))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetRasStatusData failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetRasStatusData success")
-        PrintStructure(device_RasStatusData)
-
-    ret = mxSmlGetDieRasStatusData(device_id, die_id, byref(device_RasStatusData))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDieRasStatusData failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDieRasStatusData success")
-        PrintStructure(device_RasStatusData)
-
-    hbmBw = MxSmlHbmBandwidth()
-    ret = mxSmlGetHbmBandWidth(device_id, byref(hbmBw))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetHbmBandWidth failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetHbmBandWidth success")
-        PrintStructure(hbmBw)
-
-    pmbusInfo = MxSmlPmbusInfo()
-    pmbusUnit = MxSmlPmbusUnit.MXSML_Pmbus_Soc
-    ret = mxSmlGetPmbusInfo(device_id, pmbusUnit, byref(pmbusInfo))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetPmbusInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetPmbusInfo success")
-        PrintStructure(pmbusInfo)
-
-    ret = mxSmlGetDiePmbusInfo(device_id, die_id, pmbusUnit, byref(pmbusInfo))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDiePmbusInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDiePmbusInfo success")
-        PrintStructure(pmbusInfo)
-
-    entryBoardInfo = []
-    boardPower = (MxSmlBoardWayElectricInfo* 3)(*entryBoardInfo)
-    BoardWaySize = c_uint(3)
-    ret = mxSmlGetBoardPowerInfo(device_id, BoardWaySize, boardPower)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetBoardPowerInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetBoardPowerInfo success")
-        i = 0
-        while i < BoardWaySize.value:
-            PrintStructure(boardPower[i])
-            i += 1
-
-    unit = MxSmlClockIp.MXSML_Clock_Soc
-    clocksSize = c_uint(2)
-    clocksMhz = (c_uint * 2)()
-    ret = mxSmlGetClocks(device_id, unit, clocksSize, clocksMhz)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetClocks failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetClocks success")
-        print("MXSML_Clock_Soc:", clocksMhz[0], clocksMhz[1])
-
-    pcieThroughput = MxSmlPcieThroughput()
-    ret = mxSmlGetPcieThroughput(device_id, byref(pcieThroughput))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetPcieThroughput failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetPcieThroughput success")
-        PrintStructure(pcieThroughput)
-
-    entrylist = []
-    dmaBw = (MxSmlDmaEngineBandwidth* 5)(*entrylist)
-    size = c_uint(5)
-    ret = mxSmlGetDmaBandwidth(device_id, dmaBw, size)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDmaBandwidth failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDmaBandwidth success")
-        i = 0
-        while i < size.value:
-            PrintStructure(dmaBw[i])
-            i += 1
-
-    processNumber = c_uint(0)
-    ret = mxSmlGetNumberOfProcess(byref(processNumber))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetNumberOfProcess failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetNumberOfProcess success")
-        print("NumberOfProcess: " + str(processNumber))
-
-    entrylist = []
-    processNumber = processNumber.value
-    processInfo = (MxSmlProcessInfo*processNumber)(*entrylist)
-    ret = mxSmlGetProcessInfo(processNumber, processInfo)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetProcessInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetProcessInfo success")
-        i = 0
-        while i < processNumber:
-            PrintStructure(processInfo[i])
-            i += 1
-
-    entrylist = []
-    processInfo = (MxSmlProcessInfo_v2*processNumber)(*entrylist)
-    ret = mxSmlGetProcessInfo_v2(processNumber, processInfo)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetProcessInfo_v2 failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetProcessInfo_v2 success")
-        i = 0
-        while i < processNumber:
-            PrintStructure(processInfo[i])
-            i += 1
-
-    entrylist = []
-    processNumber = c_uint(64)
-    processInfo = (MxSmlProcessInfo*64)(*entrylist)
-    ret = mxSmlGetSingleGpuProcess(device_id, byref(processNumber), processInfo)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetSingleGpuProcess failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetSingleGpuProcess success, process number: " + str(processNumber))
-        i = 0
-        while i < processNumber.value:
-            PrintStructure(processInfo[i])
-            i += 1
-
-    entrylist = []
-    processNumber = c_uint(64)
-    processInfo = (MxSmlProcessInfo_v2*64)(*entrylist)
-    ret = mxSmlGetSingleGpuProcess_v2(device_id, byref(processNumber), processInfo)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetSingleGpuProcess_v2 failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetSingleGpuProcess_v2 success, process number: " + str(processNumber))
-        i = 0
-        while i < processNumber.value:
-            PrintStructure(processInfo[i])
-            i += 1
-
-    entryLinklist = []
-    metaxLinkBandwidth = (MxSmlMetaXLinkBandwidth* 7)(*entryLinklist)
-    metaxLinkType = MxSmlMetaXLinkType.MXSML_MetaXLink_Input
-    linkSize = c_uint(7)
-    ret = mxSmlGetMetaXLinkBandwidth(device_id, metaxLinkType, linkSize, metaxLinkBandwidth)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMetaXLinkBandwidth failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMetaXLinkBandwidth success")
-        i = 0
-        while i < linkSize.value:
-            PrintStructure(metaxLinkBandwidth[i])
-            i += 1
-
-    entryLinklist = []
-    metaxLinkTrafficStat = (MxSmlMetaXLinkTrafficStat* 7)(*entryLinklist)
-    metaxLinkType = MxSmlMetaXLinkType.MXSML_MetaXLink_Input
-    linkSize = c_uint(7)
-    ret = mxSmlGetMetaXLinkTrafficStat(device_id, metaxLinkType, linkSize, metaxLinkTrafficStat)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMetaXLinkTrafficStat failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMetaXLinkTrafficStat success")
-        i = 0
-        while i < linkSize.value:
-            PrintStructure(metaxLinkTrafficStat[i])
-            i += 1
-
-    entryLinklist = []
-    metaxLinkAer = (MxSmlMetaXLinkAer* 7)(*entryLinklist)
-    linkSize = c_uint(7)
-    ret = mxSmlGetMetaXLinkAer(device_id, linkSize, metaxLinkAer)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMetaXLinkAer failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMetaXLinkAer success")
-        i = 0
-        while i < linkSize.value:
-            PrintStructure(metaxLinkAer[i])
-            i += 1
-
-    dpmIp = c_uint(2) #MC
-    entrylist = []
-    clockInfo = (c_uint * 12)(*entrylist)
-    size = c_uint(12)
-    ret = mxSmlGetDpmIpClockInfo(device_id, dpmIp, clockInfo, size)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDpmIpClockInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDpmIpClockInfo success")
-        i = 0
-        while i < size.value:
-            print("mc[{}] clock {}".format(i, clockInfo[i]))
-            i += 1
-
-    dpmIp = c_uint(2) #MC
-    entrylist = []
-    voltageInfo = (c_uint * 12)(*entrylist)
-    size = c_uint(12)
-    ret = mxSmlGetDpmIpVddInfo(device_id, dpmIp, voltageInfo, size)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDpmIpVddInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDpmIpVddInfo success")
-        i = 0
-        while i < size.value:
-            print("mc[{}] voltage {}".format(i, voltageInfo[i]))
-            i += 1
-
-    dpmIp = c_uint(3) #soc
-    dpmIpPerfLevel = c_uint(0)
-    ret = mxSmlGetCurrentDpmIpPerfLevel(device_id, dpmIp, dpmIpPerfLevel)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetCurrentDpmIpPerfLevel failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetCurrentDpmIpPerfLevel success")
-        print("soc CurrentPerfLevel {}".format(dpmIpPerfLevel))
-
-    unit = MxSmlVersionUnit.MXSML_Version_Bios #bios
-    size = c_uint(64)
-    entrylist = []
-    version = (c_char * 64)(*entrylist)
-    ret = mxSmlGetDeviceVersion(device_id, unit, version, size)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDeviceVersion failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDeviceVersion success: " + version.value.decode('ASCII'))
-
-    ip = MxSmlUsageIp.MXSML_Usage_Vpue
-    usage = c_int(0)
-    ret = mxSmlGetDeviceIpUsage(device_id, ip, usage)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDeviceIpUsage failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDeviceIpUsage success: " + str(usage))
-
-    ip = MxSmlFwIp.MXSML_Fw_IpName_SMP0
-    loglevel = c_uint(0)
-    ret = mxSmlGetFwIpLoglevel(device_id, ip, loglevel)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetFwIpLoglevel for smp0 failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetFwIpLoglevel for smp0 success: " + str(loglevel))
-
-    pcieInfo = MxSmlPcieInfo()
-    ret = mxSmlGetPcieInfo(device_id, byref(pcieInfo))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetPcieInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetPcieInfo success")
-        PrintStructure(pcieInfo)
-
-    ret = mxSmlGetPcieMaxLinkInfo(device_id, byref(pcieInfo))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetPcieMaxLinkInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetPcieMaxLinkInfo success")
-        PrintStructure(pcieInfo)
-
-    mxlkInfo = MxSmlMetaXLinkInfo()
-    ret = mxSmlGetMetaXLinkInfo(device_id, byref(mxlkInfo))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMetaXLinkInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMetaXLinkInfo success")
-    for idx, item in enumerate(mxlkInfo.speed):
-        print("MetaXLink Port#{} -- {}".format(idx, item))
-
-    deviceState = c_int(0)
-    ret = mxSmlGetDeviceState(device_id, deviceState)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDeviceState failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDeviceState success: " + str(deviceState))
-
-    entrylist = []
-    localUuid = (c_char * 64)(*entrylist)
-    remoteUuid = (c_char * 64)(*entrylist)
-    uuidSize = c_uint(64)
-    ret = mxSmlGetLocalAndRemoteUuid(localUuid, remoteUuid, byref(uuidSize))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetLocalAndRemoteUuid failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetLocalAndRemoteUuid success: %s %s" % (localUuid.value.decode('ASCII'), remoteUuid.value.decode('ASCII')))
-
-    entrylist = []
-    localUuid = (c_char * 64)(*entrylist)
-    remoteUuid1 = (c_char * 64)(*entrylist)
-    remoteUuid2 = (c_char * 64)(*entrylist)
-    remotes = (POINTER(c_char)*2)(*[remoteUuid1, remoteUuid2])
-    remotesSize = c_uint(2)
-    uuidSize = c_uint(64)
-    ret = mxSmlGetLocalAndMultipleRemoteUuid(localUuid, remotes, byref(remotesSize), byref(uuidSize))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetLocalAndMultipleRemoteUuid failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetLocalAndMultipleRemoteUuid success: local uuid %s" % (localUuid.value.decode('ASCII')))
-        print("remotesSize %d, remoteUuid1 %s, remoteUuid2 %s" % (remotesSize.value, remoteUuid1.value.decode('ASCII'),
-            remoteUuid2.value.decode('ASCII')))
-
-    size = c_uint(3)
-    entrylist = []
-    opticalModuleStatus = (MxSmlOpticalModuleStatus*3)(*entrylist)
-    ret = mxSmlGetOpticalModuleStatus(device_id, opticalModuleStatus, byref(size))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetOpticalModuleStatus failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetOpticalModuleStatus success")
-        i = 0
-        while i < size.value:
-            PrintStructure(opticalModuleStatus[i])
-            i += 1
-
-    clocksThrottleReason = c_ulonglong(0)
-    ret = mxSmlGetCurrentClocksThrottleReason(device_id, byref(clocksThrottleReason))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetCurrentClocksThrottleReason failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetCurrentClocksThrottleReason success: " + str(clocksThrottleReason))
-
-    powerLimit = c_uint(0)
-    ret = mxSmlGetBoardPowerLimit(device_id, byref(powerLimit))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetBoardPowerLimit failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetBoardPowerLimit success: " + str(powerLimit))
-
-    mxlkStateCode = MxSmlMetaXLinkState(MxSmlMetaXLinkState.MXSML_MetaXLink_State_Enabled)
-    entrylist = []
-    mxlkState = (c_char * 128)(*entrylist)
-    size = c_uint(128)
-    ret = mxSmlGetMetaXLinkState(device_id, byref(mxlkStateCode), mxlkState, byref(size))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMetaXLinkState failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMetaXLinkState success, mxlkStateCode:{} mxlkState:{}".format(mxlkStateCode, mxlkState.value.decode('ASCII')))
-
-    entrylist = []
-    mxlkPortState = (MxSmlMxlkPortState * 7)(*entrylist)
-    size = c_uint(7)
-    ret = mxSmlGetMetaXLinkPortState(device_id, mxlkPortState, byref(size))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMetaXLinkPortState failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMetaXLinkPortState success")
-
-    state = c_uint()
-    ret = mxSmlGetPciMmioState(device_id, byref(state))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetPciMmioState failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetPciMmioState success, state:{}".format(state))
-
-    eventType = MxSmlPciEventType.MXSML_Pci_Event_AER_UE
-    entrylist = []
-    eventInfo = (MxSmlPciEventInfo*2)(*entrylist)
-    size = c_uint(2)
-    ret = mxSmlGetPciEventInfo(device_id, eventType, eventInfo, byref(size))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetPciEventInfo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetPciEventInfo success")
-        i = 0
-        while i < size.value:
-            PrintStructure(eventInfo[i])
-            i += 1
-
-    size = c_uint(32)
-    entrylist = []
-    boardSerial = (c_char * 32)(*entrylist)
-    ret = mxSmlGetBoardSerial(device_id, boardSerial, byref(size))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetBoardSerial failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetBoardSerial success, baordSerial:{}".format(boardSerial.value.decode('ASCII')))
-
-    isaVersion = c_int(0)
-    ret = mxSmlGetDeviceIsaVersion(device_id, byref(isaVersion))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDeviceIsaVersion failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDeviceIsaVersion success, isaVersion:{}".format(isaVersion))
-
-    # sgpu
-    sgpuNum = mxSmlGetSgpuCount(device_id)
-    print("Device{} mxSmlGetSgpuCount: {}".format(device_id, sgpuNum))
-
-    timeslice = c_uint(0)
-    ret = mxSmlGetDeviceTimeslice(device_id, byref(timeslice))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("Device{} mxSmlGetDeviceTimeslice failed: {}"
-                .format(device_id, mxSmlGetErrorString(ret).decode('ASCII')))
-    else:
-        print("mxSmlGetDeviceTimeslice success, Device{} timeslice: {}"
-                .format(device_id, timeslice))
-
-    timeslice = 30
-    ret = mxSmlSetDeviceTimeslice(device_id, timeslice)
-    if ret != MxSmlReturn.MXSML_Success:
-        print("Device{} mxSmlSetDeviceTimeslice failed: {}"
-                .format(device_id, mxSmlGetErrorString(ret).decode('ASCII')))
-    else:
-        print("mxSmlSetDeviceTimeslice success, Device{} timeslice: {}"
-                .format(device_id, timeslice))
-
-    for sgpu_id in range(sgpuNum):
-        sgpuInfo = MxSmlSgpuInfo()
-        ret = mxSmlGetSgpuInfo(device_id, sgpu_id, byref(sgpuInfo))
+        # die
+        die_count = c_uint(1)
+        ret = mxSmlGetDeviceDieCount(device_id, die_count)
         if ret != MxSmlReturn.MXSML_Success:
-            print("Device{} Sgpu{} mxSmlGetSgpuInfo failed: {}"
-                  .format(device_id, sgpuNum, mxSmlGetErrorString(ret).decode('ASCII')))
+            print("mxSmlGetDeviceCount failed: {}".format(mxSmlGetErrorString(ret).decode('ASCII')))
         else:
-            print("mxSmlGetSgpuInfo success")
-            PrintStructure(sgpuInfo)
+            print("mxSmlGetDeviceCount: {}".format(die_count.value))
 
-        size = c_uint(32)
-        entrylist = []
-        alias = (c_char * 32)(*entrylist)
-        ret = mxSmlGetSgpuAlias(device_id, sgpu_id, alias, byref(size))
-        if ret != MxSmlReturn.MXSML_Success:
-            print("Device {} Sgpu {} mxSmlGetSgpuAlias failed: {}"
-                  .format(device_id, sgpu_id, mxSmlGetErrorString(ret).decode('ASCII')))
-        else:
-            print("mxSmlGetSgpuAlias success")
-            print("Device {} Sgpu {} Alias {}"
-                  .format(device_id, sgpu_id, alias.value.decode('ASCII')))
+        for die_id in range(die_count.value):
+            print("{} GPU#{} DIE#{} {}".format("-" * head_len, device_id, die_id, "-" * head_len))
+            demo_get_die_version("bios", MxSmlVersionUnit.MXSML_Version_Bios, device_id, die_id)
+            demo_get_die_version("driver", MxSmlVersionUnit.MXSML_Version_Driver, device_id, die_id)
+            demo_get_die_unavailable_reason(device_id, die_id)
+            demo_get_die_temperature_info("hotspot", MxSmlTemperatureSensors.MXSML_Temperature_Hotspot, device_id, die_id)
+            demo_get_die_temperature_info("core", MxSmlTemperatureSensors.MXSML_Temperature_Core, device_id, die_id)
+            demo_get_die_usage_info("vpue", MxSmlUsageIp.MXSML_Usage_Vpue, device_id, die_id)
+            demo_get_die_usage_info("vpud", MxSmlUsageIp.MXSML_Usage_Vpud, device_id, die_id)
+            demo_get_die_usage_info("xcore", MxSmlUsageIp.MXSML_Usage_Xcore, device_id, die_id)
+            demo_get_die_usage_info("mma", MxSmlUsageIp.MXSML_Usage_Mma, device_id, die_id)
+            demo_get_die_memory_info(device_id, die_id)
+            demo_get_die_pmbus_info("soc", MxSmlPmbusUnit.MXSML_Pmbus_Soc, device_id, die_id)
+            demo_get_die_pmbus_info("core", MxSmlPmbusUnit.MXSML_Pmbus_Core, device_id, die_id)
+            demo_get_die_pmbus_info("hbm", MxSmlPmbusUnit.MXSML_Pmbus_Hbm, device_id, die_id)
+            demo_get_die_pmbus_info("pcie", MxSmlPmbusUnit.MXSML_Pmbus_Pcie, device_id, die_id)
+            demo_get_die_clock_info("vpue", MxSmlClockIp.MXSML_Clock_Vpue, device_id, die_id)
+            demo_get_die_clock_info("vpud", MxSmlClockIp.MXSML_Clock_Vpud, device_id, die_id)
+            demo_get_die_clock_info("mem", MxSmlClockIp.MXSML_Clock_Mc0, device_id, die_id)
+            demo_get_die_clock_info("xcore", MxSmlClockIp.MXSML_Clock_Xcore, device_id, die_id)
+            demo_get_die_hbm_bandwidth(device_id, die_id)
+            demo_get_die_hbm_bandwidth_utilization(device_id, die_id)
+            demo_get_die_dpm_level(device_id, die_id)
+            demo_get_die_process_info(device_id, die_id)
+            demo_get_die_clk_tr(device_id, die_id)
+            demo_get_die_ecc_count(device_id, die_id)
+            demo_get_die_ras_count(device_id, die_id)
+            demo_get_die_ras_status(device_id, die_id)
+            demo_get_die_driver_reserved_memory(device_id, die_id)
+            demo_get_die_mma_usage_toggle(device_id, die_id)
+            demo_get_die_clock_throttle_duration("over current", MxSmlClockThrottleType.MXSML_CLK_THROTTLE_OVER_CURRENT, device_id, die_id)
+            demo_get_die_clock_throttle_duration("over voltage", MxSmlClockThrottleType.MXSML_CLK_THROTTLE_OVER_VOLTAGE, device_id, die_id)
+            demo_get_die_clock_throttle_duration("power brake", MxSmlClockThrottleType.MXSML_CLK_THROTTLE_POWER_BRAKE, device_id, die_id)
 
-        memory = MxSmlSgpuMemoryInfo()
-        ret = mxSmlGetSgpuMemory(device_id, sgpu_id, byref(memory))
-        if ret != MxSmlReturn.MXSML_Success:
-            print("Device {} Sgpu {} mxSmlGetSgpuMemory failed: "
-                  .format(device_id, sgpu_id, mxSmlGetErrorString(ret).decode('ASCII')))
-        else:
-            print("mxSmlGetSgpuMemory success")
-            PrintStructure(memory)
+        # sgpu
+        sgpuNum = mxSmlGetSgpuCount(device_id)
+        print("mxSmlGetSgpuCount: {}".format(sgpuNum))
+        demo_get_sgpu_timeslice(device_id)
 
-        usage = c_int(0)
-        ret = mxSmlGetSgpuUsage(device_id, sgpu_id, byref(usage))
-        if ret != MxSmlReturn.MXSML_Success:
-            print("Device {} Sgpu {} mxSmlGetSgpuUsage failed: "
-                 .format(device_id, sgpu_id, mxSmlGetErrorString(ret).decode('ASCII')))
-        else:
-            print("mxSmlGetSgpuUsage success")
-            print("Device {} Sgpu {} usage {}".format(device_id, sgpu_id, usage))
+        for sgpu_id in range(sgpuNum):
+            print("{} GPU#{} SGPU#{} {}".format("-" * head_len, device_id, sgpu_id, "-" * head_len))
+            demo_get_sgpu_info(device_id, sgpu_id)
+            demo_get_sgpu_usage(device_id, sgpu_id)
+            demo_get_sgpu_memory_info(device_id, sgpu_id)
+            demo_get_sgpu_alias(device_id, sgpu_id)
+            demo_get_sgpu_annotations_id(device_id, sgpu_id)
 
-        size = c_uint(96)
-        entrylist = []
-        annotations_id = (c_char * 96)(*entrylist)
-        ret = mxSmlGetSgpuAnnotationsId(device_id, sgpu_id, annotations_id, byref(size))
-        if ret != MxSmlReturn.MXSML_Success:
-            print("Device {} Sgpu {} mxSmlGetSgpuAnnotationsId failed: "
-                 .format(device_id, sgpu_id, mxSmlGetErrorString(ret).decode('ASCII')))
-        else:
-            print("mxSmlGetSgpuAnnotationsId success")
-            print("Device {} Sgpu {} annotations_id {}"
-                  .format(device_id, sgpu_id, annotations_id.value.decode('ASCII')))
-
-    eccCounts = MxSmlEccErrorCount()
-    ret = mxSmlGetTotalEccErrors(device_id, byref(eccCounts))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetTotalEccErrors failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetTotalEccErrors success")
-        print("sram CE:{}  sram UE:{}".format(eccCounts.sramCE, eccCounts.sramUE))
-        print("dram CE:{}  dram UE:{}".format(eccCounts.dramCE, eccCounts.dramUE))
-        print("retiredPage:{}".format(eccCounts.retiredPage))
-
-    topoInfo = MxSmlMetaXLinkTopo()
-    ret = mxSmlGetMetaXLinkTopo(device_id, byref(topoInfo))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetMetaXLinkTopo failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetMetaXLinkTopo success")
-        print("topology id:{}, socker id:{}, die id:{}".format(topoInfo.topologyId, topoInfo.socketId, topoInfo.dieId))
-
-    unavailable_reason = MxSmlDeviceUnavailableReasonInfo()
-    ret = mxSmlGetDieUnavailableReason(device_id, die_id, byref(unavailable_reason))
-    if ret != MxSmlReturn.MXSML_Success:
-        print("mxSmlGetDieUnavailableReason failed: " + mxSmlGetErrorString(ret).decode('ASCII'))
-    else:
-        print("mxSmlGetDieUnavailableReason success, code:{} "
-        .format(unavailable_reason.unavailableCode, unavailable_reason.unavailableReason.decode('ASCII')))
+        print()

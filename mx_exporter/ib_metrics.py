@@ -132,6 +132,16 @@ class IBMonitor:
             if 'bnxt' in nic:
                 continue
 
+            vendor_path = os.path.join(self.ib_path, nic, 'device', 'vendor')
+            try:
+                with open(vendor_path, 'r') as f:
+                    vendor_id = f.read().strip()
+                    if vendor_id == '0x9999':
+                        continue
+            except (OSError, IOError) as e:
+                print(f"Warning: Cannot read vendor for {nic} ({e}), skipping.")
+                continue
+
             ib_nic = IBNic(self.ib_path, nic)
             ports_dir = os.path.join(self.ib_path, nic, 'ports')
             ports = set()
@@ -267,6 +277,120 @@ class BnxtMonitor:
 
         return True,dst_int
 
+class ETHMonitor:
+
+    def __init__(self):
+        self.eth_counters = [
+                "drop_pkt_pulse", "fatal_bresp", "fatal_cq", "fatal_cq_recently_qp_id", "fatal_nak", "fatal_nak_recently_qp_id",
+                "fatal_op", "fatal_op_recently_qp_id", "fatal_retry", "fatal_retry_recently_qp_id", "fatal_rx", "fatal_rx_recently_qp_id",
+                "icrc_err", "intr_en", "intr_status", "len_err", "lifespan", "qp0_ud_tx_emsn", "qp1_ud_tx_emsn", "roce_drop", "roce_nak_out",
+                "roce_req_finish", "roce_req_recv", "rx_cnp", "rx_cnp_recently_qp_id", "rx_drop_cnp_pulse"
+                ]
+        self.port_eth_counter = Gauge("mx_port_eth_counter", "eth counters", ["eth_name", "port", "counter_name", "Hostname"])
+        self.eth_path = '/sys/class/infiniband/'
+        self.eths = []
+        self.initialize()
+
+    def initialize(self):
+        print("start initialize")
+        self.eths.clear()
+        self.find_eths()
+        self.filter_counters()
+
+    def find_eths(self):
+        if not os.path.exists(self.eth_path):
+            print("Eth path not exist")
+            return
+
+        for eth_name in os.listdir(self.eth_path):
+            if 'bnxt' in eth_name:
+                continue
+
+            vendor_path = os.path.join(self.eth_path, eth_name, 'device', 'vendor')
+            try:
+                with open(vendor_path, 'r') as f:
+                    vendor_id = f.read().strip()
+                    if vendor_id != '0x9999':
+                        continue
+            except (OSError, IOError) as e:
+                print(f"Warning: Cannot read vendor for {eth_name} ({e}), skipping.")
+                continue
+
+            eth = IBNic(self.eth_path, eth_name)
+            ports_dir = os.path.join(self.eth_path, eth_name, 'ports')
+            ports = set()
+            for port in os.listdir(ports_dir):
+                hw_counter_dir = os.path.join(ports_dir, port, "hw_counters")
+                if os.path.exists(hw_counter_dir):
+                    ports.add(port)
+                else:
+                    print("find_eths error %s port %s is not valid" % (eth_name, port))
+
+            if len(ports) != 0:
+                eth.set_ports(ports)
+                self.eths.append(eth)
+            else:
+                print("find_eths error %s has no valid port" % eth_name)
+
+        return
+
+    def filter_counters(self):
+        for eth in self.eths:
+            eth.filter_counters([], self.eth_counters)
+
+        return
+
+    def export(self, host_name):
+        self.port_eth_counter.clear()
+
+        if len(self.eths) == 0:
+            print("No valid eth found")
+            self.initialize()
+            return
+
+        print("Export ETH counters")
+        need_init = False
+        for eth in self.eths:
+            eth_name = eth.get_nic_name()
+            if not os.path.exists(os.path.join(self.eth_path, eth_name)):
+                print("Export Error %s not exist" % eth_name)
+                need_init = True
+                continue
+
+            for port in eth.get_ports():
+                port_dir = os.path.join(self.eth_path, eth_name, "ports", port)
+
+                hw_counter_dir = os.path.join(port_dir, "hw_counters")
+                for hw_counter in eth.get_hw_counters_export():
+                    self.port_eth_counter.labels(eth_name, port, hw_counter, host_name).set(self.get_counter_value(hw_counter_dir, hw_counter))
+
+        if need_init:
+            self.initialize()
+
+        return
+
+    def get_counter_value(self, counter_dir, counter_name):
+        counter_file = os.path.join(counter_dir, counter_name)
+        value = 0
+        try:
+            with open(counter_file, 'r') as f:
+                value = f.read().strip()
+        except Exception as e:
+            print("Read %s error %s" % (counter_file, e))
+
+        return value
+
+    def get_all_counters(self):
+        counters = []
+        for eth in self.eths:
+            eth_name = eth.get_nic_name()
+            for port in eth.get_ports():
+                port_dir = os.path.join(self.eth_path, eth_name, "ports", port)
+
+                hw_counter_dir = os.path.join(port_dir, "hw_counters")
+                for hw_counter in eth.get_hw_counters_export():
+                    counters.append((eth_name, port, hw_counter, self.get_counter_value(hw_counter_dir, hw_counter)))
+        return counters
 
 if __name__ == "__main__":
     monitor = IBMonitor()

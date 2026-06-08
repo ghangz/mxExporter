@@ -32,13 +32,16 @@ import threading
 from functools import partial
 from datetime import datetime
 from copy import deepcopy
-
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
 from mx_exporter.mxsml_function import *
+from mx_exporter.sgpu_monitor import SgpuMonitor
 
-
+print_lock = threading.Lock()
 old_print = print
 def timestamp_print(*args, **kwargs):
-    old_print(datetime.now(), "GpuMonitor", *args, **kwargs)
+    with print_lock:
+        old_print(datetime.now(), "GpuMonitor", *args, **kwargs)
 print = timestamp_print
 
 
@@ -81,6 +84,22 @@ class ServerInfo:
         self.conn_status = conn_status
 
 
+class CounterInfo:
+    def __init__(self, value):
+        self.old_value = value
+        self.new_value = value
+
+    def update(self, value):
+        self.new_value = value
+        if self.old_value > self.new_value:
+            self.old_value = self.new_value
+
+    def get_counter(self):
+        value = self.new_value - self.old_value
+        self.old_value = self.new_value
+        return value
+
+
 class GpuMonitor:
     def __init__(self, gather_interval = 10):
         self.init_members(gather_interval)
@@ -108,10 +127,23 @@ class GpuMonitor:
         while True:
             start = time.time()
 
-            self.monitor_native_devices()
-            self.monitor_pf_devices()
-            self.monitor_vf_devices()
-            self.monitor_sgpu_devices()
+            workers = len(self.native_ids) + len(self.pf_ids) + len(self.vf_ids)
+            futures = []
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                for id in self.native_ids:
+                    futures.append(executor.submit(self.monitor_native_devices, id))
+
+                for id in self.pf_ids:
+                    futures.append(executor.submit(self.monitor_pf_devices, id))
+
+                for id in self.vf_ids:
+                    futures.append(executor.submit(self.monitor_vf_devices, id))
+
+            for future in as_completed(futures):
+                future.result()
+
+            self.get_limited_gpu_state()
+            self.sgpu_monitor.monitor(self.sgpu_metrics_required, self.native_ids)
             self.monitor_server()
 
             elapsed_time = time.time() - start
@@ -120,6 +152,11 @@ class GpuMonitor:
                 time.sleep(self.gather_interval - elapsed_time)
             else:
                 print("error elapsed_time %d" % elapsed_time)
+
+            _, available_gpus = self.get_available_gpus()
+            if self.available_gpus != available_gpus:
+                print("Device number changed: {} -> {}".format(len(self.available_gpus), len(available_gpus)))
+                self.need_init = True
 
             if self.need_init == True:
                 self.initialize()
@@ -134,13 +171,27 @@ class GpuMonitor:
     def get_gpu_data(self):
         with self.lock:
             data = deepcopy(self.gpu_data)
+            # get counter data
+            for idx, metric_datas in self.gpu_counter_data.items():
+                for metric_id, counter_info in metric_datas.items():
+                    if isinstance(counter_info, dict):
+                        data[idx][metric_id] = {
+                            port_id : port_info.get_counter()
+                            for port_id, port_info in counter_info.items()
+                        }
+                    else:
+                        data[idx][metric_id] = counter_info.get_counter()
+        return data
+
+
+    def get_gpu_basic_data(self):
+        with self.lock:
+            data = deepcopy(self.gpu_basic_data)
         return data
 
 
     def get_sgpu_data(self):
-        with self.lock:
-            data = deepcopy(self.sgpu_data)
-        return data
+        return self.sgpu_monitor.get_sgpu_data()
 
 
     def update_server_data(self, metric_id, data):
@@ -158,12 +209,36 @@ class GpuMonitor:
             self.gpu_data[device_id][metric_id] = data
 
 
-    def update_sgpu_data(self, device_id, sgpu_id, metric_id, data):
+    def update_gpu_basic_data(self, metric_id, data):
         with self.lock:
-            if (device_id, sgpu_id) not in self.sgpu_data:
-                self.sgpu_data[(device_id, sgpu_id)] = ({metric_id : data})
+            self.gpu_basic_data[metric_id] = data
+
+
+    def update_gpu_counter_data(self, device_id, metric_id, data):
+        with self.lock:
+            counter_data = self.gpu_counter_data[device_id].get(metric_id)
+            if not counter_data:
+                if isinstance(data, dict): # mxlk ports or clk throttle types
+                    self.gpu_counter_data[device_id][metric_id] = {
+                        port_id : CounterInfo(value)
+                        for port_id, value in data.items()
+                    }
+                else:
+                    self.gpu_counter_data[device_id][metric_id] = CounterInfo(data)
+
             else:
-                self.sgpu_data[(device_id, sgpu_id)].update({metric_id : data})
+                if isinstance(data, dict): # mxlk ports
+                    for port_id, value in data.items():
+                        counter_data[port_id].update(value)
+                else:
+                    counter_data.update(data)
+
+
+    def update_sgpu_data(self, device_id, sgpu_id, metric_id, data):
+        if (device_id, sgpu_id) not in self.sgpu_data:
+            self.sgpu_data[(device_id, sgpu_id)] = ({metric_id : data})
+        else:
+            self.sgpu_data[(device_id, sgpu_id)].update({metric_id : data})
 
 
     def generate_supported_metrics(self):
@@ -173,9 +248,10 @@ class GpuMonitor:
                 self.metrics_supported.append(metric_id)
 
     def remove_notsupported_metrics(self, metric_id):
-        if metric_id in self.metrics_required:
-            print("Remove not supported metric %s" % metric_id)
-            self.metrics_required.remove(metric_id)
+        with self.lock:
+            if metric_id in self.metrics_required:
+                print("Remove not supported metric %s" % metric_id)
+                self.metrics_required.remove(metric_id)
 
     def get_supported_metrics(self):
         return self.metrics_supported
@@ -184,121 +260,200 @@ class GpuMonitor:
         return self.device_info_map
 
     def get_sgpu_info_dict(self):
-        return self.all_sgpu_info, self.sgpu_pod_uuid_map
+        return self.sgpu_monitor.get_sgpu_info_dict()
 
     def get_bdf_device_map(self):
         return self.bdf_device_map
 
+    def get_available_gpus(self):
+        ret = mxsml_init()
+        if ret != MxSmlReturn.MXSML_Success:
+            return (ret, [])
+
+        available_gpus = []
+        gpu_num = mxSmlGetDeviceCount()
+        for i in range(gpu_num):
+            state = c_int(0)
+            ret = mxSmlGetDeviceState(c_uint(i), byref(state))
+            if ret == MxSmlReturn.MXSML_Success and state.value == 1:
+                available_gpus.append(i)
+                self.limited_devices.discard(i)
+            elif ret == MxSmlReturn.MXSML_Success and state.value == 0:
+                self.limited_devices.add(i)
+
+        return (ret, available_gpus)
+
     def initialize(self):
-        self.clear()
+        self.clear_before_mxsml_init()
 
         while True:
-            ret = mxsml_init()
+            ret, self.available_gpus = self.get_available_gpus()
             if ret != MxSmlReturn.MXSML_Success:
-                print("first mxSmlInit failed: %s" % (mxsml_get_error_string(ret)))
-                time.sleep(30)
+                print("first mxSmlInit failed: {}".format(mxsml_get_error_string(ret)))
+                time.sleep(5)
             else:
+                if len(self.available_gpus) == 0:
+                    print("first mxSmlInit failed: no available devices were discovered")
+                    time.sleep(5)
+                    continue
+
                 print("first mxSmlInit success")
-                gpu_num1 = mxSmlGetDeviceCount()
-                print("Device number1: %d" % (gpu_num1))
+                print("Device number1: {}".format(len(self.available_gpus)))
 
-                time.sleep(30)
+                time.sleep(5)
 
-                ret = mxsml_init()
+                ret, available_gpus = self.get_available_gpus()
                 if ret != MxSmlReturn.MXSML_Success:
-                    print("second mxSmlInit failed: %s" % (mxsml_get_error_string(ret)))
-                    time.sleep(30)
+                    print("second mxSmlInit failed: {}".format(mxsml_get_error_string(ret)))
+                    time.sleep(5)
                 else:
                     print("second mxSmlInit success")
-                    gpu_num2 = mxSmlGetDeviceCount()
-                    print("Device number2: %d" % (gpu_num2))
-                    if gpu_num1 == gpu_num2:
+                    print("Device number2: {}".format(len(available_gpus)))
+                    if self.available_gpus == available_gpus:
                         print("initialize success")
                         break
                     else:
                         print("initialize failed, gpu number is not equal")
-                        time.sleep(30)
+                        time.sleep(5)
 
+        self.clear_after_mxsml_init()
         self.need_init = False
         self.metrics_required = deepcopy(self.metrics_required_original)
         self.find_all_devices()
+        self.get_gpu_basic_info()
+        self.sgpu_monitor.initialize()
 
-    def clear(self):
+    def get_gpu_basic_info(self):
+        self.get_gpu_basic_power_info()
+        self.get_gpu_basic_clock_info()
+        self.get_gpu_basic_temperature_info()
+        self.get_gpu_basic_pcie_info()
+        self.get_gpu_basic_mxlk_info()
+
+    def get_gpu_basic_power_info(self):
+        ret = MxSmlReturn.MXSML_Success
+        for device_id in self.native_ids + self.pf_ids:
+            ret, min_board_power_limit, max_board_power_limit = mxsml_get_board_power_limit_constraints(device_id)
+            if ret == MxSmlReturn.MXSML_Success:
+                self.update_gpu_basic_data("min_board_power_limit", min_board_power_limit)
+                self.update_gpu_basic_data("max_board_power_limit", max_board_power_limit)
+                break
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetBoardPowerLimitConstraints failed: {}".format(mxsml_get_error_string(ret)))
+
+    def get_gpu_basic_clock_info(self):
+        ret = MxSmlReturn.MXSML_Success
+        # get maximum gpu clock frequency
+        for device_id in self.native_ids + self.pf_ids:
+            ret, max_gpu_clock = mxsml_get_max_clock_frequency(device_id, MxSmlDpmIp.MXSML_Dpm_Xcore)
+            if ret == MxSmlReturn.MXSML_Success:
+                self.update_gpu_basic_data("max_gpu_clock", max_gpu_clock)
+                break
+
+            elif ret == MxSmlReturn.MXSML_OperationNotSupport:
+                ret, max_gpu_clock = mxsml_get_max_clock_frequency(device_id, MxSmlDpmIp.MXSML_Dpm_Dla)
+                if ret == MxSmlReturn.MXSML_Success:
+                    self.update_gpu_basic_data("max_gpu_clock", max_gpu_clock)
+                    break
+
+        # get maximum mc clock frequency
+        for device_id in self.native_ids + self.pf_ids:
+            ret, max_mc_clock = mxsml_get_max_clock_frequency(device_id, MxSmlDpmIp.MXSML_Dpm_Mc)
+            if ret == MxSmlReturn.MXSML_Success:
+                self.update_gpu_basic_data("max_mc_clock", max_mc_clock)
+                break
+
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDpmIpClockInfo failed: {}".format(mxsml_get_error_string(ret)))
+
+    def get_gpu_basic_temperature_info(self):
+        ret = MxSmlReturn.MXSML_Success
+        for device_id in self.native_ids + self.pf_ids:
+            ret, temp = mxsml_get_device_temperature_info(device_id, MxSmlTemperatureSensors.MXSML_Temperature_HotLimit)
+            if ret == MxSmlReturn.MXSML_Success:
+                self.update_gpu_basic_data("max_gpu_work_temp", temp / 100)
+                break
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetTemperatureInfo failed: {}".format(mxsml_get_error_string(ret)))
+
+    def get_gpu_basic_pcie_info(self):
+        ret = MxSmlReturn.MXSML_Success
+        for device_id in self.native_ids + self.pf_ids:
+            ret, speed, width = mxsml_get_pcie_max_link_info(device_id)
+            if ret == MxSmlReturn.MXSML_Success:
+                self.update_gpu_basic_data("max_pcie_speed", speed)
+                self.update_gpu_basic_data("max_pcie_width", width)
+                break
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetPcieMaxLinkInfo failed: {}".format(mxsml_get_error_string(ret)))
+
+    def get_gpu_basic_mxlk_info(self):
+        ret = MxSmlReturn.MXSML_Success
+        for device_id in self.native_ids + self.pf_ids:
+            ret, mxlk_info = mxsml_get_device_metaxlink_info(device_id)
+            if ret == MxSmlReturn.MXSML_Success:
+                max_speed = max([item[0] for item in mxlk_info])
+                max_width = max([item[1] for item in mxlk_info])
+                if max_width > 0:
+                    self.update_gpu_basic_data("max_mxlk_speed", max_speed)
+                    self.update_gpu_basic_data("max_mxlk_width", max_width)
+                    break
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetMetaXLinkInfo_v2 failed: {}".format(mxsml_get_error_string(ret)))
+
+    def clear_before_mxsml_init(self):
         self.gpu_data.clear()
+        self.memory_info_map.clear()
+        self.pcie_info.clear()
+        self.pcie_bridge_info.clear()
+        self.gpu_counter_data.clear()
         self.native_ids.clear()
         self.pf_ids.clear()
         self.vf_ids.clear()
-        self.bdf_device_map.clear()
-        self.device_info_map.clear()
+        self.limited_devices.clear()
+        self.device_isa_map.clear()
         self.metrics_required.clear()
-        self.clear_sgpu()
+        self.sgpu_monitor.clear_all_sgpu_info()
         self.clear_server_data()
 
-    def clear_sgpu(self): # sgpu is dynamic
-        self.sgpu_data.clear()
-        self.all_sgpu_info.clear()
-        self.sgpu_pod_uuid_map.clear()
-        self.sgpu_memory_info.clear()
+    def clear_after_mxsml_init(self):
+        self.bdf_device_map.clear()
+        self.device_info_map.clear()
 
     def clear_server_data(self):
         self.server_data.clear()
         self.mxlk_status = 1
 
-    def monitor_native_devices(self):
-        for id in self.native_ids:
-            print("Get data GPU#%d " %(id))
-            self.get_memory_info(id)
-            self.get_pcie_info(id)
-            self.get_pcie_bridge_info(id)
-            self.get_mxlk_info(id)
+    def monitor_native_devices(self, id):
+        self.safe_print("Get data GPU#%d " %(id))
+        self.get_memory_info(id)
+        self.get_pcie_info(id)
+        self.get_pcie_bridge_info(id)
+        self.get_mxlk_info(id)
 
-            for metric_id in self.metrics_required:
-                if self.metric_map[metric_id].for_native == 1:
-                    self.metric_map[metric_id].func(id, metric_id)
-
-
-    def monitor_pf_devices(self):
-        for id in self.pf_ids:
-            print("Get data GPU#%d" %(id))
-            self.get_pcie_info(id)
-            self.get_pcie_bridge_info(id)
-
-            for metric_id in self.metrics_required:
-                if self.metric_map[metric_id].for_pf == 1:
-                    self.metric_map[metric_id].func(id, metric_id)
+        for metric_id in self.metrics_required:
+            if self.metric_map[metric_id].for_native == 1:
+                self.metric_map[metric_id].func(id, metric_id)
 
 
-    def monitor_vf_devices(self):
-        for id in self.vf_ids:
-            print("Get data VGPU#%d" %(id))
-            self.get_memory_info(id)
+    def monitor_pf_devices(self, id):
+        self.safe_print("Get data GPU#%d" %(id))
+        self.get_pcie_info(id)
+        self.get_pcie_bridge_info(id)
 
-            for metric_id in self.metrics_required:
-                if self.metric_map[metric_id].for_vf == 1:
-                    self.metric_map[metric_id].func(id, metric_id)
+        for metric_id in self.metrics_required:
+            if self.metric_map[metric_id].for_pf == 1:
+                self.metric_map[metric_id].func(id, metric_id)
 
 
-    def monitor_sgpu_devices(self):
-        self.clear_sgpu()
-        sgpu_memory_toggle = 0
-        if any(map(lambda metric: metric in self.sgpu_metrics_required,
-            ['sgpu_memory_total', 'sgpu_memory_used', 'sgpu_memory_free'])):
-            sgpu_memory_toggle = 1
+    def monitor_vf_devices(self, id):
+        self.safe_print("Get data VGPU#%d" %(id))
+        self.get_memory_info(id)
 
-        if len(self.sgpu_metrics_required) != 0:
-            for id in self.native_ids:
-                sgpu_count = mxsml_get_sgpu_count(id)
-                if sgpu_count == -1 or sgpu_count == 0:
-                    # Skip if the version of mxsmlBindings.py and libmxsml.so is too low for sgpu mode
-                    continue
+        for metric_id in self.metrics_required:
+            if self.metric_map[metric_id].for_vf == 1:
+                self.metric_map[metric_id].func(id, metric_id)
 
-                print("Get sgpu data GPU#%d(sgpu count:%d)" %(id, sgpu_count))
-                self.get_sgpu_info(id, sgpu_count)
-                if sgpu_memory_toggle:
-                    self.get_sgpu_memory_info(id)
-
-                for metric_id in self.sgpu_metrics_required:
-                    self.metric_map[metric_id].func(id, metric_id)
 
     def monitor_server(self):
         server_metrics = ['server_info', 'server_conn_status']
@@ -323,16 +478,36 @@ class GpuMonitor:
         self.mxlk_status = 1 # init in each period
 
 
+    def get_limited_gpu_state(self):
+        metric_id = "gpu_state"
+        if metric_id not in self.metrics_required:
+            return
+
+        for device_id in self.limited_devices:
+            for die_id in self.get_device_die_range(device_id):
+                unavailable_reason = ""
+                ret, unavailable_reason = mxsml_get_die_unavailable_reason(device_id, die_id)
+                self.update_die_data(device_id, die_id, metric_id, {unavailable_reason: 0})
+
+
     def init_members(self, gather_interval):
         self.server_data = {}
 
-        # (device id, die id) : {metric id : value}
+        # 1. (device id, die id) : {metric id : value}
+        # 2. device id : {metric id : value}
         self.gpu_data = {}
 
-        # (device id, sgpu id) : {metric id : value}
-        self.sgpu_data = {}
+        # 1. (device id, die id) : {metric id : CounterInfo}
+        # 2. device id : {metric id : CounterInfo}
+        self.gpu_counter_data = {}
+
+        # {metric id : value}
+        self.gpu_basic_data = {}
+
+        self.sgpu_monitor = SgpuMonitor()
 
         self.lock = threading.Lock()
+        self.print_lock = threading.Lock()
 
         self.metrics_supported = []  # supported metrics per product
         self.metrics_required_original = [] # store original required metrics, must not update
@@ -342,9 +517,13 @@ class GpuMonitor:
         self.gather_interval = gather_interval  # seconds
 
         # store device ids
+        self.available_gpus = [] # Update at initialization stage
         self.native_ids = []
         self.pf_ids = []
         self.vf_ids = []
+
+        # limited device
+        self.limited_devices = set()
 
         # bdfid : device id
         self.bdf_device_map = {}
@@ -352,18 +531,17 @@ class GpuMonitor:
         self.device_info_map = {}
         # device id : die count
         self.device_die_count_map = {}
+        # device id : isa version
+        self.device_isa_map = {}
         # server mxlk status, 1 - health, 0 - unhealthy, set as 0 if any mxlk link is abnormal
         # need initialized with 1 in each period
         self.mxlk_status = 1
 
         # store device info each time to avoid calling apis repeatedly
-        self.memory_info_map = {} # {die_id : MxSmlMemoryInfo()}
-        self.mxlk_info = MxSmlMetaXLinkInfo()
-        self.pcie_info = MxSmlPcieInfo()
-        self.pcie_bridge_info = MxSmlPcieInfo()
-        self.all_sgpu_info = {} # { (device_id, sgpu_id) : MxSmlSgpuInfo() }
-        self.sgpu_pod_uuid_map = {} # { (device_id, sgpu_id) : pod_register_uuid }
-        self.sgpu_memory_info = {} # { (device_id, sgpu_id) : MxSmlSgpuMemoryInfo() }
+        self.memory_info_map = {} # { (device_id, die_id) : MxSmlMemoryInfo() }
+        self.mxlk_info = {} # {device_id : mxlk_info = []}
+        self.pcie_info = {} # {device_id : MxSmlPcieInfo()}
+        self.pcie_bridge_info = {} # {device_id : MxSmlPcieInfo()}
 
         self.metric_map = {
             # metric id  : (id, for_native, for_pf, for_vf, for_sgpu, for_mxn, for_mxc, func)
@@ -379,12 +557,14 @@ class GpuMonitor:
             "gpu_usage"    : Metric("gpu_usage",     1, 1, 1, 0, 0, 1, partial(self.get_gpu_usage, MxSmlUsageIp.MXSML_Usage_Xcore)),
             "vpue_usage"   : Metric("vpue_usage",    1, 1, 1, 0, 1, 1, partial(self.get_gpu_usage, MxSmlUsageIp.MXSML_Usage_Vpue)),
             "vpud_usage"   : Metric("vpud_usage",    1, 1, 1, 0, 1, 1, partial(self.get_gpu_usage, MxSmlUsageIp.MXSML_Usage_Vpud)),
+            "mma_usage"    : Metric("mma_usage",     1, 0, 1, 0, 0, 1, partial(self.get_gpu_usage, MxSmlUsageIp.MXSML_Usage_Mma)),
             "memory_usage" : Metric("memory_usage",  1, 0, 1, 0, 1, 1, self.get_memory_usage),
             "memory_total" : Metric("memory_total",  1, 0, 1, 0, 1, 1, self.get_memory_total),
             "memory_used"  : Metric("memory_used",   1, 0, 1, 0, 1, 1, self.get_memory_used),
             # Power
-            "board_power"  : Metric("board_power",   1, 1, 0, 0, 1, 1, self.get_board_power),
-            "pmbus_power"  : Metric("pmbus_power",   1, 1, 0, 0, 1, 1, self.get_pmbus_power),
+            "board_power"       : Metric("board_power",         1, 1, 0, 0, 1, 1, self.get_board_power),
+            "board_power_limit" : Metric("board_power_limit",   1, 1, 0, 0, 0, 1, self.get_board_power_limit),
+            "pmbus_power"       : Metric("pmbus_power",         1, 1, 0, 0, 1, 1, self.get_pmbus_power),
             # Clocks
             "dla_clock"    : Metric("dla_clock",     1, 1, 0, 0, 1, 0, partial(self.get_clocks, MxSmlClockIp.MXSML_Clock_Dla)),
             "g2d_clock"    : Metric("g2d_clock",     1, 1, 0, 0, 1, 0, partial(self.get_clocks, MxSmlClockIp.MXSML_Clock_G2D)),
@@ -397,6 +577,7 @@ class GpuMonitor:
             "mxlk_bw"      : Metric("mxlk_bw",       1, 0, 0, 0, 0, 1, self.get_mxlk_bandwidth),
             "hbm_bw"       : Metric("hbm_bw",        1, 1, 0, 0, 1, 1, self.get_hbm_throughput),
             "eth_bw"       : Metric("eth_bw",        1, 1, 0, 0, 0, 1, self.get_eth_throughput),
+            "hbm_bw_util"  : Metric("hbm_bw_util",   1, 1, 0, 0, 0, 1, self.get_hbm_bw_util),
             # Dpm
             "dla_dpm_level"  : Metric("dla_dpm_level",   1, 1, 0, 0, 1, 0, partial(self.get_dpm_level, MxSmlDpmIp.MXSML_Dpm_Dla)),
             "xcore_dpm_level": Metric("xcore_dpm_level", 1, 1, 0, 0, 0, 1, partial(self.get_dpm_level, MxSmlDpmIp.MXSML_Dpm_Xcore)),
@@ -405,10 +586,16 @@ class GpuMonitor:
             "pcie_width"        : Metric("pcie_width",        1, 1, 0, 0, 1, 1, self.get_pcie_width),
             "pcie_bridge_speed" : Metric("pcie_bridge_speed", 1, 1, 0, 0, 1, 1, self.get_pcie_bridge_speed),
             "pcie_bridge_width" : Metric("pcie_bridge_width", 1, 1, 0, 0, 1, 1, self.get_pcie_bridge_width),
-            "mxlk_speed"        : Metric("mxlk_speed",        1, 0, 0, 0, 0, 1, self.get_mxlk_speed),
-            "mxlk_width"        : Metric("mxlk_width",        1, 0, 0, 0, 0, 1, self.get_mxlk_width),
-            "mxlk_traffic_total_bytes" : Metric("mxlk_traffic_total_bytes", 1, 0, 0, 0, 0, 1, self.get_mxlk_traffic_total_bytes),
-            "mxlk_aer_count"           : Metric("mxlk_aer_count",           1, 0, 0, 0, 0, 1, self.get_mxlk_aer_count),
+            "pcie_crc_error_count_total"      : Metric("pcie_crc_error_count_total",      1, 0, 0, 0, 0, 1, partial(self.get_pcie_error_count, MxSmlLinkErrorCounterType.MXSML_Link_Error_Crc)),
+            "pcie_replay_error_count_total"   : Metric("pcie_replay_error_count_total",   1, 0, 0, 0, 0, 1, partial(self.get_pcie_error_count, MxSmlLinkErrorCounterType.MXSML_Link_Error_Replay)),
+            "pcie_recovery_error_count_total" : Metric("pcie_recovery_error_count_total", 1, 0, 0, 0, 0, 1, partial(self.get_pcie_error_count, MxSmlLinkErrorCounterType.MXSML_Link_Error_Recovery)),
+            "mxlk_speed"                      : Metric("mxlk_speed",                      1, 0, 0, 0, 0, 1, self.get_mxlk_speed),
+            "mxlk_width"                      : Metric("mxlk_width",                      1, 0, 0, 0, 0, 1, self.get_mxlk_width),
+            "mxlk_traffic_total_bytes"        : Metric("mxlk_traffic_total_bytes",        1, 0, 0, 0, 0, 1, self.get_mxlk_traffic_total_bytes),
+            "mxlk_aer_count"                  : Metric("mxlk_aer_count",                  1, 0, 0, 0, 0, 1, self.get_mxlk_aer_count),
+            "mxlk_crc_error_count_total"      : Metric("mxlk_crc_error_count_total",      1, 0, 0, 0, 0, 1, partial(self.get_mxlk_error_count, MxSmlLinkErrorCounterType.MXSML_Link_Error_Crc)),
+            "mxlk_replay_error_count_total"   : Metric("mxlk_replay_error_count_total",   1, 0, 0, 0, 0, 1, partial(self.get_mxlk_error_count, MxSmlLinkErrorCounterType.MXSML_Link_Error_Replay)),
+            "mxlk_recovery_error_count_total" : Metric("mxlk_recovery_error_count_total", 1, 0, 0, 0, 0, 1, partial(self.get_mxlk_error_count, MxSmlLinkErrorCounterType.MXSML_Link_Error_Recovery)),
             "topo_info"    : Metric("topo_info",     0, 0, 0, 0, 0, 1, self.get_topo_info),
             # Process
             "process"      : Metric("process",       1, 0, 1, 0, 1, 1, self.get_process_info),
@@ -416,14 +603,18 @@ class GpuMonitor:
             "gpu_state"    : Metric("gpu_state",     1, 0, 1, 0, 1, 1, self.get_gpu_state),
             # clock throttle reason
             "clk_thr"      : Metric("clk_thr",       1, 1, 0, 0, 0, 1, self.get_clock_throttle_reason),
+            # clock throttle duration
+            "clk_thr_duration_total": Metric("clk_thr_duration_total", 1, 1, 0, 0, 0, 1, self.get_clock_throttle_duration),
             # ECC error counts
             "ecc_error_count": Metric("ecc_error_count", 1, 1, 0, 0, 0, 1, self.get_ecc_count),
+            # driver reserved memory
+            "reserved_memory": Metric("reserved_memory", 1, 1, 0, 0, 0, 1, self.get_reserved_memory),
             # sgpu info
-            "sgpu_compute_quota" : Metric("sgpu_compute_quota",  0, 0, 0, 1, 0, 1, self.get_sgpu_compute_quota),
-            "sgpu_usage"         : Metric("sgpu_usage",          0, 0, 0, 1, 0, 1, self.get_sgpu_usage),
-            "sgpu_memory_total"  : Metric("sgpu_memory_total",   0, 0, 0, 1, 0, 1, self.get_sgpu_memory_total),
-            "sgpu_memory_used"   : Metric("sgpu_memory_used",    0, 0, 0, 1, 0, 1, self.get_sgpu_memory_used),
-            "sgpu_memory_free"   : Metric("sgpu_memory_free",    0, 0, 0, 1, 0, 1, self.get_sgpu_memory_free),
+            "sgpu_compute_quota" : Metric("sgpu_compute_quota",  0, 0, 0, 1, 0, 1, None),
+            "sgpu_usage"         : Metric("sgpu_usage",          0, 0, 0, 1, 0, 1, None),
+            "sgpu_memory_total"  : Metric("sgpu_memory_total",   0, 0, 0, 1, 0, 1, None),
+            "sgpu_memory_used"   : Metric("sgpu_memory_used",    0, 0, 0, 1, 0, 1, None),
+            "sgpu_memory_free"   : Metric("sgpu_memory_free",    0, 0, 0, 1, 0, 1, None),
             # server info
             "server_info"        : Metric("server_info",        0, 0, 0, 0, 0, 1, self.get_server_uuid),
             "server_conn_status" : Metric("server_conn_status", 0, 0, 0, 0, 0, 1, self.get_server_conn_status),
@@ -436,18 +627,16 @@ class GpuMonitor:
 
 
     def find_all_devices(self):
-        gpu_num = mxSmlGetDeviceCount()
-        print("mxSmlGetDeviceCount number: %d" % (gpu_num))
-
-        if gpu_num > 64:
+        print("available device number: {}".format(len(self.available_gpus)))
+        if len(self.available_gpus) > 64:
             self.need_init = True
             return
 
-        for gpu_id in range(0, gpu_num):
+        for gpu_id in self.available_gpus:
             self.get_device_base_info(gpu_id)
 
         pf_num = mxSmlGetPfDeviceCount()
-        print("mxSmlGetPfDeviceCount number: %d" %(pf_num))
+        print("mxSmlGetPfDeviceCount number: {}".format(pf_num))
 
         if pf_num > 16:
             self.need_init = True
@@ -455,6 +644,19 @@ class GpuMonitor:
 
         for gpu_id in range(100, 100+pf_num):
             self.get_device_base_info(gpu_id)
+
+        limited_device_ids = MxSmlLimitedDeviceIds()
+        ret = mxSmlGetAllLimitedDevices(byref(limited_device_ids))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetAllLimitedDevices failed: %s" % mxSmlGetErrorString(ret).decode('ASCII'))
+        else:
+            print("limited devices count: {}".format(limited_device_ids.number))
+            for i in range(limited_device_ids.number):
+                gpu_id = limited_device_ids.deviceId[i]
+                self.limited_devices.add(gpu_id)
+
+        for gpu_id in self.limited_devices:
+            self.get_limited_device_info(gpu_id)
 
 
     def get_device_base_info(self, gpu_id):
@@ -480,11 +682,40 @@ class GpuMonitor:
 
         self.bdf_device_map[device_info.bdfId.decode('ASCII')] = gpu_id
         self.gpu_data[gpu_id] = {}
+        self.gpu_counter_data[gpu_id] = {}
+
+        self.device_isa_map[gpu_id] = mxsml_get_device_isa_version(gpu_id)
 
         for die_id in range(0, die_count):
             self.gpu_data[(gpu_id, die_id)] = {}
+            self.gpu_counter_data[(gpu_id, die_id)] = {}
             self.store_device_info(device_info, die_id)
             self.set_product_type(device_info.brand)
+
+
+    def get_limited_device_info(self, gpu_id):
+        device_info = MxSmlDeviceInfo()
+        ret = mxSmlGetLimitedDeviceInfo(gpu_id, byref(device_info))
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetLimitedDeviceInfo for GPU#%d failed: %s" % (gpu_id, mxsml_get_error_string(ret)))
+            ret = mxSmlGetDeviceInfo(gpu_id, byref(device_info)) # not available device but get base info normally
+            if ret != MxSmlReturn.MXSML_Success:
+                print("try mxSmlGetDeviceInfo for GPU#%d failed: %s" % (gpu_id, mxsml_get_error_string(ret)))
+                self.bdf_device_map[device_info.bdfId.decode('ASCII')] = gpu_id # for log monitor
+        else:
+            print("mxSmlGetLimitedDeviceInfo for GPU#%d device name: %s" % (gpu_id, device_info.deviceName.decode('ASCII')))
+            self.bdf_device_map[device_info.bdfId.decode('ASCII')] = gpu_id # for log monitor
+
+        ret, die_count = mxsml_get_device_die_count(gpu_id)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetDeviceDieCount for GPU#%d failed: %s" % (gpu_id, mxsml_get_error_string(ret)))
+            die_count = 0
+        print("get_limited_device_info for GPU#%d count: %s" % (gpu_id, die_count))
+        self.device_die_count_map[gpu_id] = die_count
+
+        for die_id in range(0, die_count):
+            self.gpu_data[(gpu_id, die_id)] = {}
+            self.store_limited_device_info(device_info, die_id)
 
 
     def set_product_type(self, device_brand):
@@ -503,6 +734,17 @@ class GpuMonitor:
         )
 
 
+    def store_limited_device_info(self, device_info, die_id):
+        self.device_info_map[(device_info.deviceId, die_id)] = DeviceInfo(
+            device_info, 'unknown', 'unknown', -1, -1, -1
+        )
+
+
+    def safe_print(self, *args, **kwargs):
+        with self.print_lock:
+            print(*args, **kwargs)
+
+
     def get_version(self, gpu_id, die_id, unit):
         ret, version = mxsml_get_die_version(gpu_id, die_id, unit)
         if ret != MxSmlReturn.MXSML_Success:
@@ -514,7 +756,8 @@ class GpuMonitor:
     def get_topo_info(self, device_id, die_id):
         ret, topo_info = mxsml_get_device_metaxlink_topo(device_id)
         if ret != MxSmlReturn.MXSML_Success:
-            print("mxSmlGetMetaXLinkTopo failed: %s" % (mxsml_get_error_string(ret)))
+            if ret != MxSmlReturn.MXSML_OperationNotSupport:
+                print("mxSmlGetMetaXLinkTopo failed: %s" % (mxsml_get_error_string(ret)))
             return -1,-1,-1
 
         return topo_info.topologyId, topo_info.socketId, die_id
@@ -525,31 +768,36 @@ class GpuMonitor:
 
 
     def get_memory_info(self, device_id):
-        self.memory_info_map.clear()
         if any(map(lambda metric: metric in self.metrics_required, ['memory_usage', 'memory_total', 'memory_used'])):
             for die_id in self.get_device_die_range(device_id):
                 ret, info = mxsml_get_die_memory_info(device_id, die_id)
                 if ret != MxSmlReturn.MXSML_Success:
                     print("mxSmlGetMemoryInfo failed: %s" % (mxsml_get_error_string(ret)))
-                    self.need_init = True
                     break
-                self.memory_info_map[die_id] = info
+                with self.lock:
+                    self.memory_info_map[(device_id, die_id)] = info
 
 
     def get_pcie_info(self, id):
         if any(map(lambda metric: metric in self.metrics_required, ['pcie_speed', 'pcie_width'])):
-            ret = mxSmlGetPcieInfo(id, byref(self.pcie_info))
+            pcie_info = MxSmlPcieInfo()
+            ret = mxSmlGetPcieInfo(id, byref(pcie_info))
             if ret != MxSmlReturn.MXSML_Success:
                 print("mxSmlGetPcieInfo failed: %s" % (mxsml_get_error_string(ret)))
-                self.need_init = True
+            else:
+                with self.lock:
+                    self.pcie_info[id] = pcie_info
 
 
     def get_pcie_bridge_info(self, id):
         if any(map(lambda metric: metric in self.metrics_required, ['pcie_bridge_speed', 'pcie_bridge_width'])):
-            ret = mxSmlGetPcieMaxLinkInfo(id, byref(self.pcie_bridge_info))
+            pcie_bridge_info = MxSmlPcieInfo()
+            ret = mxSmlGetPcieMaxLinkInfo(id, byref(pcie_bridge_info))
             if ret != MxSmlReturn.MXSML_Success:
                 print("mxSmlGetPcieMaxLinkInfo failed: %s" % (mxsml_get_error_string(ret)))
-                self.need_init = True
+            else:
+                with self.lock:
+                    self.pcie_bridge_info[id] = pcie_bridge_info
 
 
     def get_mxlk_info(self, device_id):
@@ -557,21 +805,26 @@ class GpuMonitor:
             ret, mxlk_info = mxsml_get_device_metaxlink_info(device_id)
             if ret != MxSmlReturn.MXSML_Success:
                 print("mxSmlGetMetaXLinkInfo failed: %s" % (mxsml_get_error_string(ret)))
-                self.need_init = True
                 self.mxlk_status = 0
             else:
-                self.mxlk_info = mxlk_info
-                self.check_mxlk_status(mxlk_info)
+                with self.lock:
+                    self.mxlk_info[device_id] = mxlk_info
+                self.check_mxlk_status(device_id, mxlk_info)
 
 
-    def check_mxlk_status(self, mxlk_info):
-        for idx in range(METAX_LINK_NUM):
-            if mxlk_info.speed[idx] == 0 and mxlk_info.width[idx] == 0:
+    def check_mxlk_status(self, device_id, mxlk_info):
+        for (speed, width) in mxlk_info:
+            if speed == 0 and width == 0:
                 continue
 
-            if mxlk_info.width[idx] != 16 or mxlk_info.speed[idx] not in [32, 2.5]:
+            if speed not in [32, 2.5]:
                 self.mxlk_status = 0
                 return
+
+            if width != 16:
+                if width != 8 or self.device_isa_map[device_id] != 15:
+                    self.mxlk_status = 0
+            return
 
 
     def get_temperature(self, sensor, device_id, metric_id):
@@ -608,7 +861,6 @@ class GpuMonitor:
             self.remove_notsupported_metrics(metric_id)
         else:
             print("mxSmlGetOpticalModuleStatus failed: %s" % (mxsml_get_error_string(ret)))
-            self.need_init = True
 
 
     # All native, pf and vf devices can access GPU usage
@@ -617,10 +869,27 @@ class GpuMonitor:
             ret, usage = mxsml_get_device_ip_usage(device_id, ip)
             if ret != MxSmlReturn.MXSML_Success:
                 print("mxSmlGetDeviceIpUsage for %d failed: %s" % (ip, mxsml_get_error_string(ret)))
-                self.need_init = True
             else:
                 self.update_gpu_data(device_id, metric_id, usage)
             return
+
+        if ip == MxSmlUsageIp.MXSML_Usage_Mma:
+            ret, toggle = mxsml_get_mma_usage_toggle(device_id)
+            if ret != MxSmlReturn.MXSML_Success:
+                if ret == MxSmlReturn.MXSML_OperationNotSupport:
+                    self.remove_notsupported_metrics(metric_id)
+                else:
+                    print("mxSmlGetMmaUsageToggle for %d failed: %s" % (ip, mxsml_get_error_string(ret)))
+                return
+
+            elif not toggle: # enable mma usage collecting toggle
+                ret = mxsml_set_mma_usage_toggle(device_id, 1)
+                if ret != MxSmlReturn.MXSML_Success:
+                    if ret == MxSmlReturn.MXSML_OperationNotSupport or ret == MxSmlReturn.MXSML_SysfsWriteError:
+                        self.remove_notsupported_metrics(metric_id)
+                    else:
+                        print("mxSmlSetMmaUsageToggle for %d failed: %s" % (ip, mxsml_get_error_string(ret)))
+                    return
 
         for die_id in self.get_device_die_range(device_id):
             ret, usage = mxsml_get_die_ip_usage(device_id, die_id, ip)
@@ -630,11 +899,15 @@ class GpuMonitor:
                 self.remove_notsupported_metrics(metric_id)
             else:
                 print("mxSmlGetDeviceIpUsage for %d failed: %s" % (ip, mxsml_get_error_string(ret)))
-                self.need_init = True
 
 
     def get_memory_usage(self, device_id, metric_id):
-        for die_id, memory_info in self.memory_info_map.items():
+        for die_id in self.get_device_die_range(device_id):
+            with self.lock:
+                memory_info = self.memory_info_map.get((device_id, die_id))
+            if memory_info is None:
+                continue
+
             data = {"vram":0, "xtt":0}
             if memory_info.vramTotal != 0:
                 data["vram"] = memory_info.vramUse*100/memory_info.vramTotal
@@ -646,12 +919,22 @@ class GpuMonitor:
 
 
     def get_memory_total(self, device_id, metric_id):
-        for die_id, memory_info in self.memory_info_map.items():
+        for die_id in self.get_device_die_range(device_id):
+            with self.lock:
+                memory_info = self.memory_info_map.get((device_id, die_id))
+            if memory_info is None:
+                continue
+
             self.update_die_data(device_id, die_id, metric_id, {"vram":memory_info.vramTotal, "xtt":memory_info.xttTotal})
 
 
     def get_memory_used(self, device_id, metric_id):
-        for die_id, memory_info in self.memory_info_map.items():
+        for die_id in self.get_device_die_range(device_id):
+            with self.lock:
+                memory_info = self.memory_info_map.get((device_id, die_id))
+            if memory_info is None:
+                continue
+
             self.update_die_data(device_id, die_id, metric_id, {"vram":memory_info.vramUse, "xtt":memory_info.xttUse})
 
 
@@ -690,6 +973,14 @@ class GpuMonitor:
                 power_total += boardPowerInfo[i].power
                 i += 1
             self.update_gpu_data(device_id, metric_id, power_total)
+
+
+    def get_board_power_limit(self, device_id, metric_id):
+        ret, board_limit = mxsml_get_board_power_limit(device_id)
+        if ret != MxSmlReturn.MXSML_Success:
+            print("mxSmlGetBoardPowerLimit failed: {}".format(device_id, mxsml_get_error_string(ret)))
+        else:
+            self.update_gpu_data(device_id, metric_id, board_limit)
 
 
     def get_clocks(self, ip, device_id, metric_id):
@@ -743,7 +1034,6 @@ class GpuMonitor:
 
             else:
                 print("mxSmlGetMetaXLinkBandwidth failed: %s" % mxsml_get_error_string(ret))
-                self.need_init = True
                 return
 
         self.update_gpu_data(device_id, metric_id, data)
@@ -764,7 +1054,6 @@ class GpuMonitor:
 
             else:
                 print("mxSmlGetMetaXLinkTrafficStat failed: %s" % mxsml_get_error_string(ret))
-                self.need_init = True
                 return
 
         self.update_gpu_data(device_id, metric_id, data)
@@ -784,10 +1073,22 @@ class GpuMonitor:
 
         else:
             print("mxSmlGetMetaXLinkAer failed: %s" % mxsml_get_error_string(ret))
-            self.need_init = True
             return
 
         self.update_gpu_data(device_id, metric_id, data)
+
+
+    def get_mxlk_error_count(self, counterType, device_id, metric_id):
+        ret, counters = mxsml_get_mxlk_error_counter(device_id, counterType)
+        if ret == MxSmlReturn.MXSML_Success:
+            data = {i + 1 : value for i,value in enumerate(counters)}
+            self.update_gpu_counter_data(device_id, metric_id, data)
+
+        elif ret == MxSmlReturn.MXSML_OperationNotSupport:
+            self.remove_notsupported_metrics(metric_id)
+
+        else:
+            print("get_mxlk_error_count {} failed: {}".format(counterType, mxsml_get_error_string(ret)))
 
 
     def get_hbm_throughput(self, device_id, metric_id):
@@ -798,6 +1099,17 @@ class GpuMonitor:
                 print("mxSmlGetHbmBandWidth failed: %s" % mxsml_get_error_string(ret))
             else:
                 self.update_die_data(device_id, die_id, metric_id, hbmThroughput.hbmBandwidthRespTotal)
+
+
+    def get_hbm_bw_util(self, device_id, metric_id):
+        for die_id in self.get_device_die_range(device_id):
+            ret, utilization = mxsml_get_die_hbm_bw_util(device_id, die_id)
+            if ret == MxSmlReturn.MXSML_Success:
+                self.update_die_data(device_id, die_id, metric_id, utilization)
+            elif ret == MxSmlReturn.MXSML_OperationNotSupport:
+                self.remove_notsupported_metrics(metric_id)
+            else:
+                print("mxSmlGetDieHbmBandwidthUtilization failed: %s" % mxsml_get_error_string(ret))
 
 
     def get_dpm_level(self, ip, device_id, metric_id):
@@ -820,29 +1132,51 @@ class GpuMonitor:
 
 
     def get_pcie_speed(self, device_id, metric_id):
-        self.update_gpu_data(device_id, metric_id, self.pcie_info.speed)
+        with self.lock:
+            pcie_info = self.pcie_info.get(device_id)
+        if pcie_info is not None:
+            self.update_gpu_data(device_id, metric_id, pcie_info.speed)
 
     def get_pcie_width(self, device_id, metric_id):
-        self.update_gpu_data(device_id, metric_id, self.pcie_info.width)
+        with self.lock:
+            pcie_info = self.pcie_info.get(device_id)
+        if pcie_info is not None:
+            self.update_gpu_data(device_id, metric_id, pcie_info.width)
 
     def get_pcie_bridge_speed(self, device_id, metric_id):
-        self.update_gpu_data(device_id, metric_id, self.pcie_bridge_info.speed)
+        with self.lock:
+            pcie_bridge_info = self.pcie_bridge_info.get(device_id)
+        if pcie_bridge_info is not None:
+            self.update_gpu_data(device_id, metric_id, pcie_bridge_info.speed)
 
     def get_pcie_bridge_width(self, device_id, metric_id):
-        self.update_gpu_data(device_id, metric_id, self.pcie_bridge_info.width)
+        with self.lock:
+            pcie_bridge_info = self.pcie_bridge_info.get(device_id)
+        if pcie_bridge_info is not None:
+            self.update_gpu_data(device_id, metric_id, pcie_bridge_info.width)
+
+    def get_pcie_error_count(self, counterType, device_id, metric_id):
+        ret, value = mxsml_get_pcie_error_counter(device_id, counterType)
+        if ret == MxSmlReturn.MXSML_Success:
+            self.update_gpu_counter_data(device_id, metric_id, value)
+
+        elif ret == MxSmlReturn.MXSML_OperationNotSupport:
+            self.remove_notsupported_metrics(metric_id)
+
+        else:
+            print("get_pcie_error_count {} failed: {}".format(counterType, mxsml_get_error_string(ret)))
 
     def get_mxlk_speed(self, device_id, metric_id):
         data = {}
-        for idx in range(METAX_LINK_NUM):
-            data[idx+1] = self.mxlk_info.speed[idx]
+        for idx, (speed, width) in enumerate(self.mxlk_info.get(device_id, []), 1):
+            data[idx] = speed
         self.update_gpu_data(device_id, metric_id, data)
 
     def get_mxlk_width(self, device_id, metric_id):
         data = {}
-        for idx in range(METAX_LINK_NUM):
-            data[idx+1] = self.mxlk_info.width[idx]
+        for idx, (speed, width) in enumerate(self.mxlk_info.get(device_id, []), 1):
+            data[idx] = width
         self.update_gpu_data(device_id, metric_id, data)
-
 
     def get_process_info(self, device_id, metric_id):
         entrylist = []
@@ -888,8 +1222,27 @@ class GpuMonitor:
                 return
             else:
                 print("mxSmlGetCurrentClocksThrottleReason failed: " + mxsml_get_error_string(ret))
-                self.need_init = True
                 return
+
+
+    def get_clock_throttle_duration(self, device_id, metric_id):
+        for die_id in self.get_device_die_range(device_id):
+            data = {}
+            for type_name, type_unit in {
+                "over_current": MxSmlClockThrottleType.MXSML_CLK_THROTTLE_OVER_CURRENT,
+                "over_voltage": MxSmlClockThrottleType.MXSML_CLK_THROTTLE_OVER_VOLTAGE,
+                "power_brake": MxSmlClockThrottleType.MXSML_CLK_THROTTLE_POWER_BRAKE,
+            }.items():
+                ret, throttleDuration = mxsml_get_die_clock_throttle_duration(device_id, die_id, type_unit)
+                if ret == MxSmlReturn.MXSML_Success:
+                    data[type_name] = throttleDuration
+                elif ret == MxSmlReturn.MXSML_OperationNotSupport or ret == MxSmlReturn.MXSML_SysfsWriteError:
+                    self.remove_notsupported_metrics(metric_id)
+                    return
+                else:
+                    print("mxSmlGetClocksThrottleDuration failed: " + mxsml_get_error_string(ret))
+                    return
+            self.update_gpu_counter_data((device_id, die_id), metric_id, data)
 
 
     def get_ecc_count(self, device_id, metric_id):
@@ -913,73 +1266,19 @@ class GpuMonitor:
                 return
             else:
                 print("mxSmlGetDieTotalEccErrors failed: %s" % mxsml_get_error_string(ret))
-                self.need_init = True
                 return
 
 
-    def get_sgpu_info(self, device_id, sgpu_count):
-        count = 0
-        for sgpu_id in range(0, 16): # max sgpu count = 16
-            if count >= sgpu_count:
-                break
-
-            ret, sgpu_info = mxsml_get_sgpu_info(device_id, sgpu_id)
+    def get_reserved_memory(self, device_id, metric_id):
+        for die_id in self.get_device_die_range(device_id):
+            ret, reserved_memory = mxsml_get_die_driver_reserved_memory(device_id, die_id)
             if ret == MxSmlReturn.MXSML_Success:
-                count = count + 1
-                self.all_sgpu_info[(device_id, sgpu_id)] = sgpu_info
-                pod_register_uuid = mxsml_get_sgpu_annotations_id(device_id, sgpu_id)
-                self.sgpu_pod_uuid_map[(device_id, sgpu_id)] = pod_register_uuid
-            elif ret != MxSmlReturn.MXSML_OperationNotSupport:
-                print("mxSmlGetSgpuInfo failed: %s" % (mxsml_get_error_string(ret)))
-                self.need_init = True
-                break
-
-
-    def get_sgpu_usage(self, device_id, metric_id):
-        for (device_id, sgpu_id) in self.all_sgpu_info:
-            usage = c_int(0)
-            ret = mxSmlGetSgpuUsage(device_id, sgpu_id, byref(usage))
-            if ret != MxSmlReturn.MXSML_Success and ret != MxSmlReturn.MXSML_OperationNotSupport:
-                print(f"Device {device_id} Sgpu {sgpu_id} mxSmlGetSgpuUsage failed: "
-                        + mxSmlGetErrorString(ret).decode('ASCII'))
+                self.update_die_data(device_id, die_id, metric_id, reserved_memory)
+            elif ret == MxSmlReturn.MXSML_OperationNotSupport:
+                self.remove_notsupported_metrics(metric_id)
             else:
-                self.update_sgpu_data(device_id, sgpu_id, metric_id, usage.value/100)
+                print("mxSmlGetDieDriverReservedMemory failed: %s" % mxsml_get_error_string(ret))
 
-
-    def get_sgpu_memory_info(self, device_id):
-        for (device_id, sgpu_id) in self.all_sgpu_info:
-            memory = MxSmlSgpuMemoryInfo()
-            ret = mxSmlGetSgpuMemory(device_id, sgpu_id, byref(memory))
-            if ret != MxSmlReturn.MXSML_Success and ret != MxSmlReturn.MXSML_OperationNotSupport:
-                print(f"Device {device_id} Sgpu {sgpu_id} mxSmlGetSgpuMemory failed: "
-                        + mxSmlGetErrorString(ret).decode('ASCII'))
-                self.need_init = True
-                break
-            self.sgpu_memory_info[(device_id, sgpu_id)] = memory
-
-
-    def get_sgpu_memory_total(self, device_id, metric_id):
-        for (device_id, sgpu_id) in self.sgpu_memory_info:
-            memory = self.sgpu_memory_info[(device_id, sgpu_id)]
-            self.update_sgpu_data(device_id, sgpu_id, metric_id, memory.total/1024)
-
-
-    def get_sgpu_memory_used(self, device_id, metric_id):
-        for (device_id, sgpu_id) in self.sgpu_memory_info:
-            memory = self.sgpu_memory_info[(device_id, sgpu_id)]
-            self.update_sgpu_data(device_id, sgpu_id, metric_id, memory.used/1024)
-
-
-    def get_sgpu_memory_free(self, device_id, metric_id):
-        for (device_id, sgpu_id) in self.sgpu_memory_info:
-            memory = self.sgpu_memory_info[(device_id, sgpu_id)]
-            self.update_sgpu_data(device_id, sgpu_id, metric_id, memory.free/1024)
-
-
-    def get_sgpu_compute_quota(self, device_id, metric_id):
-        for (device_id, sgpu_id) in self.all_sgpu_info:
-            sgpuInfo = self.all_sgpu_info[(device_id, sgpu_id)]
-            self.update_sgpu_data(device_id, sgpu_id, metric_id, sgpuInfo.computeQuota)
 
     def get_server_info(self):
         ret, local_uuid, remote_uuid1, remote_uuid2 = mxsml_get_local_and_multiple_remote_uuid()
@@ -987,7 +1286,6 @@ class GpuMonitor:
 
         if ret != MxSmlReturn.MXSML_Success and ret != MxSmlReturn.MXSML_OperationNotSupport:
              print("mxSmlGetLocalAndMultipleRemoteUuid failed: " + mxsml_get_error_string(ret))
-             self.need_init = True
 
         return ret
 
@@ -1085,7 +1383,7 @@ if __name__ == "__main__":
         "gpu_clock", "vpue_clock", "vpud_clock", "mem_clock", "pcie_bw", "mxlk_bw", "hbm_bw",
         "xcore_dpm_level", "pcie_speed", "pcie_width", "pcie_bridge_speed", "pcie_bridge_width",
         "mxlk_speed", "mxlk_width", "process", "gpu_state", "dla_clock", "g2d_clock", "clk_thr",
-        "sgpu_alias", "sgpu_compute_quota", "sgpu_usage", "sgpu_memory_total",
+        "sgpu_compute_quota", "sgpu_usage", "sgpu_memory_total",
         "sgpu_memory_used", "sgpu_memory_free", "server_info"
     ]
 

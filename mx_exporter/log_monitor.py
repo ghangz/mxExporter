@@ -99,17 +99,31 @@ class DriverEidErrorInfo:
 
 
 class LogHandler:
-    def __init__(self, regex, data_type):
+    def __init__(self, regex, data_type, gather_interval):
         self.regex = regex
         self.regex_obj = re.compile(regex)
         self.data_type = data_type
+        self.transfer_interval = gather_interval if gather_interval > 0 else 10
+        self.buf = []
         self.dataset = []
         self.lock = threading.Lock()
+
+        t = threading.Thread(target=self.transfer, args=(), daemon=True)
+        t.start()
 
     def handle(self, log):
         content = self.regex_obj.findall(log)
         for row in content:
             self.append_dataset(self.data_type(*row))
+
+    def transfer(self):
+        while True:
+            self.lock.acquire()
+            self.dataset = deepcopy(self.buf)
+            self.buf.clear()
+            self.lock.release()
+
+            time.sleep(self.transfer_interval)
 
     def get(self):
         self.lock.acquire()
@@ -117,21 +131,9 @@ class LogHandler:
         self.lock.release()
         return data
 
-    def clear(self):
-        self.lock.acquire()
-        self.dataset.clear()
-        self.lock.release()
-
-    def get_then_clear(self):
-        self.lock.acquire()
-        data = deepcopy(self.dataset)
-        self.dataset.clear()
-        self.lock.release()
-        return data
-
     def append_dataset(self, data):
         self.lock.acquire()
-        self.dataset.append(data)
+        self.buf.append(data)
         self.lock.release()
 
 
@@ -190,7 +192,7 @@ class LogMonitor:
 
 
 class KernelLogMonitor(LogMonitor):
-    def __init__(self, interval=5):
+    def __init__(self, gather_interval, monitor_interval=5):
         """
             METAX.B4F00.SMI.ERROR xxxxxxxxxx
             METAX.B4F00.V0.SMI.ERROR xxxxxxxxxx
@@ -198,15 +200,15 @@ class KernelLogMonitor(LogMonitor):
             METAX.B4F00.D0.V0.SMI.ERROR xxxxxxxxxx
         """
         self.kernel_error_regex = r'(METAX|MXGVM|MXCD)\.B([0-9A-F]{3,8})\.(?:D([0-9])\.)?(?:V[0-9]+\.)?([A-Z]{1,20})\.(ERROR|ALERT) (.+)'
-        self.kernel_error_handler = LogHandler(self.kernel_error_regex, KernelErrorInfo)
+        self.kernel_error_handler = LogHandler(self.kernel_error_regex, KernelErrorInfo, gather_interval)
         """
             MXCD.B4F00.D0.IOCTL.ERROR EID (0000:01:01.0): 0x2202, device arrary empty, xxxx, xxxx
             xxxx is optional
         """
         self.eid_error_regex = r'(?:\w+\.B\w+)(?:\.D([0-9]))?\.(?:.+) EID \((.+)\): ([^\W]+), (.+)'
-        self.eid_error_handler = LogHandler(self.eid_error_regex, DriverEidErrorInfo)
+        self.eid_error_handler = LogHandler(self.eid_error_regex, DriverEidErrorInfo, gather_interval)
 
-        super().__init__([self.kernel_error_handler, self.eid_error_handler], interval)
+        super().__init__([self.kernel_error_handler, self.eid_error_handler], monitor_interval)
 
     def start(self, mount_point='', log_file=''):
         if len(log_file) == 0:
@@ -236,10 +238,10 @@ class KernelLogMonitor(LogMonitor):
         return ['driver_eid_errors', 'driver_log_errors']
 
     def get_kernel_error_info(self):
-        return self.kernel_error_handler.get_then_clear()
+        return self.kernel_error_handler.get()
 
     def get_eid_error_info(self):
-        return self.eid_error_handler.get_then_clear()
+        return self.eid_error_handler.get()
 
 
 class SdkEidErrorInfo:
@@ -267,15 +269,15 @@ class SdkEidErrorInfo:
 
 class SysLogMonitor(LogMonitor):
 
-    def __init__(self, interval=5):
+    def __init__(self, gather_interval, monitor_interval=5):
         """
             SDK.20250619.UMD.FATAL EID (0000:01:01.0): 0x3104, Xnack Error, xxxx, xxxx
             xxxx is optional
         """
         self.eid_error_regex = r'SDK\.([0-9]+)\.([^\.\n]+)\.(?:.+) EID \((.+)\): ([^\W]+), (.+)'
-        self.eid_error_handler = LogHandler(self.eid_error_regex, SdkEidErrorInfo)
+        self.eid_error_handler = LogHandler(self.eid_error_regex, SdkEidErrorInfo, gather_interval)
 
-        super().__init__([self.eid_error_handler], interval)
+        super().__init__([self.eid_error_handler], monitor_interval)
 
     def start(self, mount_point='', log_file=''):
         if len(log_file) == 0:
@@ -305,20 +307,23 @@ class SysLogMonitor(LogMonitor):
         return ['sdk_eid_errors']
 
     def get_eid_error_info(self):
-        return self.eid_error_handler.get_then_clear()
+        return self.eid_error_handler.get()
 
 
 if __name__ == "__main__":
     import sys
-    monitor = KernelLogMonitor()
-    sys_monitor = SysLogMonitor()
+    monitor = KernelLogMonitor(5)
+    sys_monitor = SysLogMonitor(5)
     if not monitor.start(sys.argv[1], sys.argv[2]) or not sys_monitor.start(sys.argv[1], sys.argv[2]):
         print("Start failed")
         exit(-1)
 
     while True:
         logs = monitor.get_kernel_error_info()
+        logs += monitor.get_kernel_error_info()
         logs += monitor.get_eid_error_info()
+        logs += monitor.get_eid_error_info()
+        logs += sys_monitor.get_eid_error_info()
         logs += sys_monitor.get_eid_error_info()
         for log in logs:
             print(log)

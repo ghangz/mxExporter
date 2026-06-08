@@ -34,10 +34,11 @@ import socket
 import threading
 from typing import Optional
 from datetime import datetime
-from prometheus_client import CollectorRegistry, Gauge
+from prometheus_client import CollectorRegistry, Gauge, Counter, disable_created_metrics
 from mx_exporter.gpu_monitor import GpuMonitor
-from mx_exporter.ib_metrics import IBMonitor, BnxtMonitor
-from mx_exporter.kubernetes import get_pod_resource, PodInfo
+from mx_exporter.ib_metrics import IBMonitor, BnxtMonitor, ETHMonitor
+from mx_exporter.kubernetes import PodInfo, PodInfoCollector
+from mx_exporter.container import ContainerInfoCollector
 from mx_exporter.log_monitor import KernelLogMonitor,SysLogMonitor
 from collections import defaultdict
 
@@ -50,13 +51,13 @@ print = timestamp_print
 class MxCollector(object):
 
     def __init__(self, config_file, registry: Optional[CollectorRegistry] = None, gather_interval = 10,
-            ib_monitor_flag = 0, mount_point = ""):
+            ib_monitor_flag = 0, mount_point = "", kubelet_path = '/var/lib/kubelet', k8s_domains = [("metax-tech")]):
 
         if registry is not None:
             registry.register(self)
 
         self.lock = threading.Lock()
-        self.init_members(gather_interval, ib_monitor_flag)
+        self.init_members(gather_interval, ib_monitor_flag, kubelet_path, k8s_domains)
         self.init_required_metrics(config_file, self.metrics_supported)
 
         self.gpu_monitor.start(self.metrics_required.keys())
@@ -70,7 +71,7 @@ class MxCollector(object):
     def describe(self):
         return []
 
-    def init_members(self, gather_interval, ib_monitor_flag):
+    def init_members(self, gather_interval, ib_monitor_flag, kubelet_path, k8s_domains):
         self.ib_monitor_flag = ib_monitor_flag
 
         # device uuid : pod info
@@ -98,16 +99,18 @@ class MxCollector(object):
         self.metric_types = ["Gauge", "Counter", "Summary", "Histogram", "Info"]
 
         self.gpu_monitor = GpuMonitor(gather_interval)
-        self.kernel_log_monitor = KernelLogMonitor()
-        self.sys_log_monitor = SysLogMonitor()
+        self.kernel_log_monitor = KernelLogMonitor(gather_interval)
+        self.sys_log_monitor = SysLogMonitor(gather_interval)
 
         self.metrics_supported = self.gpu_monitor.get_supported_metrics() \
                 + self.kernel_log_monitor.get_supported_metrics() + self.sys_log_monitor.get_supported_metrics()
 
+        self.pod_collector = PodInfoCollector(kubelet_path, k8s_domains)
+
         if self.ib_monitor_flag:
             self.ib_monitor = IBMonitor()
             self.bnxt_monitor = BnxtMonitor()
-
+        self.eth_monitor = ETHMonitor()
         self.host_name = self.get_host_name()
 
         # basic metrics : device type, bios version, driver version
@@ -115,30 +118,35 @@ class MxCollector(object):
         self.biosVersion = Gauge("mx_bios_ver", "Bios version", ["deviceId", "dieId", "bios"])
         self.driverVersion = Gauge("mx_driver_ver", "Driver version", ["deviceId", "dieId", "driver"])
 
+        # gpu basic metrics
+        basic_metrics_labels = ["Hostname", "modelName"]
+        self.gpu_basic_metrics = {
+            "min_board_power_limit": Gauge("mx_min_board_power_limit", "Minimum board power limit in milliwatt", basic_metrics_labels),
+            "max_board_power_limit": Gauge("mx_max_board_power_limit", "Maximum board power limit in milliwatt", basic_metrics_labels),
+            "max_gpu_clock": Gauge("mx_max_gpu_clock", "Maximum gpu clock frequency in MHz", basic_metrics_labels),
+            "max_mc_clock": Gauge("mx_max_mc_clock", "Maximum board power limit in MHz", basic_metrics_labels),
+            "max_gpu_work_temp": Gauge("mx_max_gpu_work_temp", "Maximum gpu work temperature", basic_metrics_labels),
+            "max_pcie_speed": Gauge("mx_max_pcie_speed", "Maximum pcie speed in GT/s", basic_metrics_labels),
+            "max_pcie_width": Gauge("mx_max_pcie_width", "Maximum pcie width", basic_metrics_labels),
+            "max_mxlk_speed": Gauge("mx_max_mxlk_speed", "Maximum metaxlink speed in GT/s", basic_metrics_labels),
+            "max_mxlk_width": Gauge("mx_max_mxlk_width", "Maximum metaxlink width", basic_metrics_labels),
+        }
 
     def collect(self):
         with self.lock:
             print("Export metrics")
             time.sleep(0.05) # avoid 2nd thread clear metrics before 1st send response
-            self.device_pod_map = get_pod_resource()
             self.device_info_map = self.gpu_monitor.get_device_info_map()
+            self.device_pod_map = self.pod_collector.get_pod_resource()
+            if not self.device_pod_map:
+                self.device_pod_map = ContainerInfoCollector(self.device_info_map).get_container_resource()
+
             self.all_sgpu_info, self.sgpu_pod_register_id = self.gpu_monitor.get_sgpu_info_dict()
 
             self.generate_common_labels()
-            gpu_data = self.gpu_monitor.get_gpu_data()
             self.generate_sgpu_labels()
-            sgpu_data = self.gpu_monitor.get_sgpu_data()
 
-            for metric_id, metric in self.metrics_required.items():
-                metric.clear()
-                for device_key, value in gpu_data.items():
-                    if metric_id in value:
-                        self.export_common(device_key, metric, value[metric_id])
-
-                for (device_id, sgpu_id), value in sgpu_data.items():
-                    if metric_id in value:
-                        self.export_sgpu_info(device_id, sgpu_id, metric, value[metric_id])
-
+            self.export_device_info()
             self.export_device_basic_metrics()
             self.export_server_info()
             self.export_log_info()
@@ -146,7 +154,7 @@ class MxCollector(object):
             if self.ib_monitor_flag:
                 self.ib_monitor.export(self.host_name)
                 self.bnxt_monitor.export(self.host_name)
-
+            self.eth_monitor.export(self.host_name)
             return []
 
 
@@ -169,6 +177,8 @@ class MxCollector(object):
                     self.metrics_required[metric_id] = metric_func(metric_name, metric_description, metric_labels)
                 except Exception as e:
                     print("Create metric exception: %s" % (e))
+        # disable prometheus counter created series
+        disable_created_metrics()
 
 
     def is_row_valid(self, row, metrics_supported):
@@ -197,10 +207,12 @@ class MxCollector(object):
 
 
     def export_device_basic_metrics(self):
+        model_name = ""
         self.devType.clear()
         self.biosVersion.clear()
         self.driverVersion.clear()
         for (device_id, die_id), device_info in self.device_info_map.items():
+            model_name = device_info.name
             self.devType.labels(device_id, die_id, device_info.name, device_info.uuid).set(1)
             self.biosVersion.labels(device_id, die_id, device_info.bios_version).set(1)
             self.driverVersion.labels(device_id, die_id, device_info.driver_version).set(1)
@@ -208,37 +220,62 @@ class MxCollector(object):
         if 'topo_info' in self.metrics_required:
             for (device_id, die_id), device_info in self.device_info_map.items():
                 for common_labels in self.common_labels[(device_id, die_id)]:
-                    self.gauge_labels_set(self.metrics_required['topo_info'], [device_info.topo_id,
-                        device_info.socket_id, device_info.die_id, *common_labels], 1)
+                    self.update_metric_value(self.metrics_required['topo_info'], [device_info.topo_id,
+                        device_info.socket_id, die_id, *common_labels])
+
+        gpu_basic_data = self.gpu_monitor.get_gpu_basic_data()
+        for metric_id, metric in self.gpu_basic_metrics.items():
+            metric.clear()
+            if metric_id in gpu_basic_data:
+                metric.labels(self.host_name, model_name).set(gpu_basic_data[metric_id])
+
+
+    def export_device_info(self):
+        gpu_data = self.gpu_monitor.get_gpu_data()
+        sgpu_data = self.gpu_monitor.get_sgpu_data()
+
+        for metric_id, metric in self.metrics_required.items():
+            if not isinstance(metric, Counter):
+                metric.clear()
+
+            for device_key, value in gpu_data.items():
+                if metric_id in value:
+                    self.export_common(device_key, metric, value[metric_id])
+
+            for (device_id, sgpu_id), value in sgpu_data.items():
+                if metric_id in value:
+                    self.export_sgpu_info(device_id, sgpu_id, metric, value[metric_id])
 
 
     def get_sgpu_register_id(self, uuid):
+        register_id = []
         sgpu_target_dir = "/run/metax/device-plugin/sgpu/"
         sgpu_target_file = os.path.join(sgpu_target_dir, uuid)
         if not os.path.exists(sgpu_target_file):
-                return ""
+                return register_id
 
         try:
             with open(sgpu_target_file, "r") as f:
                 content = f.read().strip()
         except:
-            return ""
+            return register_id
 
         pairs = content.split(";")
         for pair in pairs:
             if "=" in pair:
                 key, value = pair.split("=", 1)
                 if key.strip() == "id":
-                    return value.strip()
+                    register_id.append(value.strip())
+                    return register_id
 
-        return ""
+        return register_id
 
 
     def get_oversubscription_register_id(self, uuid):
         register_ids = []
         for key in self.device_pod_map:
             key_str = str(key)
-            if uuid in key_str: # pod register_id format: "${native gpu uuid}::${index}"
+            if (uuid+"::") in key_str: # pod register_id format: "${native gpu uuid}::${index}"
                 register_ids.append(key)
 
         return register_ids
@@ -286,13 +323,13 @@ class MxCollector(object):
             metric_gauge = self.metrics_required[metric_id]
             for kind, value in server_data.get(metric_id, {}).items():
                 for uuid, vvalue in value.items():
-                    self.gauge_labels_set(metric_gauge, [kind, uuid, self.host_name], vvalue)
+                    self.update_metric_value(metric_gauge, [kind, uuid, self.host_name], vvalue)
 
         metric_id = 'server_conn_status'
         if metric_id in self.metrics_required:
             metric_gauge = self.metrics_required[metric_id]
             for uuid,conn_status in server_data.get(metric_id, {}).items():
-                self.gauge_labels_set(metric_gauge, [uuid, self.host_name], conn_status)
+                self.update_metric_value(metric_gauge, [uuid, self.host_name], conn_status)
 
 
     def export_log_info(self):
@@ -316,11 +353,11 @@ class MxCollector(object):
                 for key, value in metric_data.items():
                     if isinstance(value, dict):  # mxlk bw / pcie event
                         for vkey,vvalue in value.items():
-                            self.gauge_labels_set(metric_gauge, [key, vkey, *common_labels], vvalue)
+                            self.update_metric_value(metric_gauge, [key, vkey, *common_labels], vvalue)
                     else:
-                        self.gauge_labels_set(metric_gauge, [key, *common_labels], value)
+                        self.update_metric_value(metric_gauge, [key, *common_labels], value)
             else:
-                self.gauge_labels_set(metric_gauge, common_labels, metric_data)
+                self.update_metric_value(metric_gauge, common_labels, metric_data)
 
 
     def generate_sgpu_labels(self):
@@ -337,7 +374,7 @@ class MxCollector(object):
 
 
     def export_sgpu_info(self, device_id, sgpu_id, metric_gauge, metric_data):
-        self.gauge_labels_set(metric_gauge, self.sgpu_labels[(device_id, sgpu_id)], metric_data)
+        self.update_metric_value(metric_gauge, self.sgpu_labels[(device_id, sgpu_id)], metric_data)
 
 
     def export_kernel_log_info(self, metric):
@@ -347,7 +384,7 @@ class MxCollector(object):
             device_id = self.bdf_device_map.get(log.bdf_id, -1)
             if device_id in self.common_labels:
                 for common_labels in self.common_labels[(device_id, log.die_id)]:
-                    self.gauge_labels_inc(metric, [log.submodule, log.log_level, *common_labels])
+                    self.update_metric_value(metric, [log.submodule, log.log_level, *common_labels])
             else:
                 print("export_kernel_log_info Invalid device_id %d" % device_id)
                 print(log)
@@ -360,7 +397,7 @@ class MxCollector(object):
             device_id = self.bdf_device_map.get(err.bdf_id, -1)
             if device_id in self.common_labels:
                 for common_labels in self.common_labels[(device_id, err.die_id)]:
-                    self.gauge_labels_set(metric, [err.eid_info, *common_labels], err.eid)
+                    self.update_metric_value(metric, [err.eid_info, *common_labels], err.eid)
             else:
                 print("export_driver_eid_errors Invalid device_id %d" % device_id)
                 print(err)
@@ -373,7 +410,7 @@ class MxCollector(object):
             device_id = self.bdf_device_map.get(err.bdf_id, -1) # ToDo inaccurate for double die device
             if device_id in self.common_labels:
                 for common_labels in self.common_labels[(device_id,0)]:
-                    self.gauge_labels_set(metric, [err.sdk_version, err.eid_info, *common_labels], err.eid)
+                    self.update_metric_value(metric, [err.sdk_version, err.eid_info, *common_labels], err.eid)
             else:
                 print("export_sdk_eid_errors Invalid device_id %d" % device_id)
                 print(err)
@@ -395,22 +432,21 @@ class MxCollector(object):
 
             return host_name
 
-    def gauge_labels_set(self, gauge, labels, value):
-        configured_label_count = len(gauge._labelnames)
+    def update_metric_value(self, metric_obj, labels, value = 1):
+        configured_label_count = len(metric_obj._labelnames)
         current_label_count = len(labels)
-
         if(current_label_count >= configured_label_count):
-            gauge.labels(*labels[:configured_label_count]).set(value)
+            support_labels = labels[:configured_label_count]
         else:
             support_labels = labels + ["NA" for _ in range(configured_label_count - current_label_count)]
-            gauge.labels(*support_labels).set(value)
 
-    def gauge_labels_inc(self, gauge, labels):
-        configured_label_count = len(gauge._labelnames)
-        current_label_count = len(labels)
+        if(isinstance(metric_obj, Gauge)):
+            metric_obj.labels(*support_labels).set(value)
 
-        if(current_label_count >= configured_label_count):
-            gauge.labels(*labels[:configured_label_count]).inc()
-        else:
-            support_labels = labels + ["NA" for _ in range(configured_label_count - current_label_count)]
-            gauge.labels(*support_labels).inc()
+        elif(isinstance(metric_obj, Counter)):
+            if value == 0:
+                # first time export metrics and counter value is 0
+                if not metric_obj._metrics.get(tuple(str(label) for label in labels)):
+                    metric_obj.labels(*labels).inc(0)
+            else:
+                metric_obj.labels(*labels).inc(value)

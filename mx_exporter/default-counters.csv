@@ -22,12 +22,14 @@ memory_used,Gauge,mx_memory_used,HBM and system memory used in KB,type,deviceId,
 dla_usage,Gauge,mx_dla_usage,Dla usage in percent,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 g2d_usage,Gauge,mx_g2d_usage,G2D usage in percent,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 # MXC specific
-gpu_usage,Gauge,mx_gpu_usage,GPU uage in percent,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
+gpu_usage,Gauge,mx_gpu_usage,GPU usage in percent,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
+mma_usage,Gauge,mx_mma_usage,Ratio of cycles the MMA pipe is active,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
 
 # power
 board_power,Gauge,mx_board_power,Board power in milliwatt,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+board_power_limit,Gauge,mx_board_power_limit,Current board power limit in milliwatt,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 # pmbus power, label type indicates core or hbm or pcie etc.
-# pmbus_power,Gauge,mx_pmbus_power,Pmbus power in milliwatt,type,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
+#pmbus_power,Gauge,mx_pmbus_power,Pmbus power in milliwatt,type,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
 
 # clocks
 vpue_clock,Gauge,mx_vpue_clock,Encoder clock frequency in MHz,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
@@ -49,6 +51,11 @@ pcie_width,Gauge,mx_pcie_width,Pcie current lanes,deviceId,uuid,exported_pod,exp
 pcie_bridge_speed,Gauge,mx_pcie_bridge_speed,Pcie bridge current speed in GT/s,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 pcie_bridge_width,Gauge,mx_pcie_bridge_width,Pcie bridge current lanes,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
+# PCIe error counter
+pcie_crc_error_count_total,Counter,mx_pcie_crc_error_count_total,Total number of PCIe CRC errors,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+pcie_replay_error_count_total,Counter,mx_pcie_replay_error_count_total,Total number of PCIe retries,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+pcie_recovery_error_count_total,Counter,mx_pcie_recovery_error_count_total,Total number of PCIe recovery errors,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+
 # MXC specific, Metaxlink throughput, label type indicates tx or rx
 mxlk_bw,Gauge,mx_mxlk_bw,Metaxlink Tx and Rx throughput in MB/s,type,mxlkId,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
@@ -60,6 +67,12 @@ mxlk_width,Gauge,mx_mxlk_width,MetaXLink current link width,mxlkId,deviceId,uuid
 mxlk_traffic_total_bytes,Gauge,mx_mxlk_traffic_total_bytes,MetaXLink traffic total in Bytes,type,mxlkId,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 # Metaxlink aer, label type indicates ce or ue
 mxlk_aer_count,Gauge,mx_mxlk_aer_count,MetaXLink aer count,type,mxlkId,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+
+# Metaxlink error counter
+mxlk_crc_error_count_total,Counter,mx_mxlk_crc_error_count_total,Total number of MetaXLink CRC errors,mxlkId,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+mxlk_replay_error_count_total,Counter,mx_mxlk_replay_error_count_total,Total number of MetaXLink retries,mxlkId,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+mxlk_recovery_error_count_total,Counter,mx_mxlk_recovery_error_count_total,Total number of MetaXLink recovery errors,mxlkId,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+
 # Device topology info
 topo_info,Gauge,mx_topo_info,Device topology info,topology_id,socket_id,die_id,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
@@ -67,7 +80,10 @@ topo_info,Gauge,mx_topo_info,Device topology info,topology_id,socket_id,die_id,d
 eth_bw,Gauge,mx_eth_bw,Eth Tx and Rx throughput in MB/s,type,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
 # HBM throughput
-#hbm_bw,Gauge,mx_hbm_bw,HBM throughput in MB/s,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
+hbm_bw,Gauge,mx_hbm_bw,HBM throughput in MB/s,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
+
+# HBM bandwidth utilization
+hbm_bw_util,Gauge,mx_hbm_bw_util,HBM bandwidth utilization in percent,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
 
 # dpm
 # MXN specific
@@ -84,20 +100,26 @@ gpu_state,Gauge,mx_gpu_state,GPU state: 0(not available) 1(available),unavailabl
 # MXC specific current gpu clock throttle reason
 clk_thr,Gauge,mx_clk_thr,Current gpu clock throttling reason,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
 
+# MXC specific current gpu clock throttle duration, label type indicates over_current, over_voltage or power_brake
+clk_thr_duration_total,Counter,mx_clk_thr_duration_total,Throttling duration due to various constraints in us,type,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
+
 # MXC Ecc error counts, label type indicates sram_ce, sram_ue, dram_ce, dram_ue or retired_page
 ecc_error_count,Gauge,mx_ecc_error_count,Total ECC error count,type,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
 
+# Reserved memory
+reserved_memory,Gauge,mx_reserved_memory,Driver reserved memory in KB,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName,die_id
+
 # MXC sgpu compute quota
-#sgpu_compute_quota,Gauge,mx_sgpu_compute_quota,Current sgpu compute quota in percent,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+sgpu_compute_quota,Gauge,mx_sgpu_compute_quota,Current sgpu compute quota in percent,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
 # MXC sgpu usage
-#sgpu_usage,Gauge,mx_sgpu_usage,Current sgpu usage in percent,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+sgpu_usage,Gauge,mx_sgpu_usage,Current sgpu usage in percent,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
 # MXC sgpu total memory
-#sgpu_memory_total,Gauge,mx_sgpu_total_memory,Current sgpu total memory in KB,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+sgpu_memory_total,Gauge,mx_sgpu_total_memory,Current sgpu total memory in KB,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
 # MXC sgpu used memory
-#sgpu_memory_used,Gauge,mx_sgpu_used_memory,Current sgpu used memory in KB,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+sgpu_memory_used,Gauge,mx_sgpu_used_memory,Current sgpu used memory in KB,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 
 # MXC sgpu free memory
 #sgpu_memory_free,Gauge,mx_sgpu_free_memory,Current sgpu free memory in KB,deviceId,sgpuId,minor,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
