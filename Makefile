@@ -1,7 +1,7 @@
 MACAVER ?= "unknown"
 NUM_JOB ?= 4
 ARCH_L ?= amd64
-BASEREG ?= mxcr.io/hub/registry.access.redhat.com
+BASEREG ?= registry.access.redhat.com
 REG ?= cr.metax-tech.com/cloud
 DOCKERTAG = $(REG)/mx-exporter:${MACAVER}
 
