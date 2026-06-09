@@ -71,9 +71,12 @@ class MxExporterHandler(MetricsHandler):
             self.wfile.write(html_content.encode("utf-8"))
 
         elif self.path == '/health':
+            body = json.dumps({"status": "ok"}).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
             self.end_headers()
+            self.wfile.write(body)
 
         elif self.path == '/json':
             self._handle_json()
