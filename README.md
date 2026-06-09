@@ -33,6 +33,12 @@ port: http listen port, default:8000
 interval: Metrics gathering interval, default:10000ms
 config_file: Metrics configuration file in CSV format, default: ./default-counters.csv
 
+Collect runtime diagnostics before starting the exporter:
+
+```
+$ python3 tools/collect_runtime_env.py --pretty
+```
+
 ## Deployment
 
 ## Deploy with kubernetes
