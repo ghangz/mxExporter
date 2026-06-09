@@ -24,6 +24,12 @@ if you want to use self defined counter configuration file on host, here's an ex
 $ sudo docker run -d --name=mx-exporter --device=/dev/dri -p 0.0.0.0:<host port>:<http port> -v <new config file>:/work/counters.csv <image name> -c /work/counters.csv
 ```
 
+Validate the counter CSV before starting the exporter:
+
+```
+$ python3 tools/lint_counters.py mx_exporter/default-counters.csv
+```
+
 ## Run as python application
 
 ```
