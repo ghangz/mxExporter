@@ -9,13 +9,19 @@ import re
 from pathlib import Path
 
 
-IMAGE_RE = re.compile(r"^\s*image:\s*['\"]?([^'\"\s]+)", re.MULTILINE)
+IMAGE_RE = re.compile(r"^\s*image:\s*['\"]?([^'\"\n]+?)['\"]?\s*(?:#.*)?$", re.MULTILINE)
 
 
 def collect_images(root: Path) -> list[dict[str, str]]:
     images: list[dict[str, str]] = []
-    for path in sorted((root / "deployment").rglob("*")):
+    deploy_dir = root / "deployment"
+    if not deploy_dir.is_dir():
+        return images
+
+    for path in sorted(deploy_dir.rglob("*")):
         if path.suffix not in {".yaml", ".yml"}:
+            continue
+        if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for match in IMAGE_RE.finditer(text):
@@ -25,7 +31,7 @@ def collect_images(root: Path) -> list[dict[str, str]]:
 
 def audit(root: Path) -> dict[str, object]:
     images = collect_images(root)
-    exporter_images = sorted({item["image"] for item in images if "exporter" in item["path"].lower()})
+    exporter_images = sorted({item["image"] for item in images if "mx-exporter" in item["path"].lower()})
     return {
         "image_count": len(images),
         "images": images,
