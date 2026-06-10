@@ -24,6 +24,24 @@ class PortAlignmentTest(unittest.TestCase):
 
         self.assertTrue(report["aligned"])
 
+    def test_errors_when_yaml_ports_are_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "mx_exporter").mkdir()
+            (root / "deployment" / "mx-exporter").mkdir(parents=True)
+            (root / "mx_exporter" / "__init__.py").write_text(
+                'parser.add_argument("-p", "--port", default=8000)\n',
+                encoding="utf-8",
+            )
+            (root / "start_mxexporter.sh").write_text("HOST_PORT=8000\n", encoding="utf-8")
+            (root / "deployment" / "mx-exporter" / "mx-exporter-daemonset.yaml").write_text(
+                "kind: DaemonSet\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                build(root)
+
 
 if __name__ == "__main__":
     unittest.main()

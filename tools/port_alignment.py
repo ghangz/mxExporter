@@ -19,9 +19,18 @@ def build(repo_root: Path) -> dict[str, object]:
     script_text = (repo_root / "start_mxexporter.sh").read_text(encoding="utf-8")
     static_text = (repo_root / "deployment" / "mx-exporter" / "mx-exporter-daemonset.yaml").read_text(encoding="utf-8")
 
-    cli_default = int(CLI_RE.search(cli_text).group(1))
-    script_default = int(SCRIPT_RE.search(script_text).group(1))
+    cli_match = CLI_RE.search(cli_text)
+    script_match = SCRIPT_RE.search(script_text)
+    if not cli_match:
+        raise ValueError("Failed to find CLI default port in mx_exporter/__init__.py")
+    if not script_match:
+        raise ValueError("Failed to find default HOST_PORT in start_mxexporter.sh")
+
+    cli_default = int(cli_match.group(1))
+    script_default = int(script_match.group(1))
     static_ports = sorted({int(value) for value in YAML_PORT_RE.findall(static_text)})
+    if not static_ports:
+        raise ValueError("Failed to find any ports in mx-exporter-daemonset.yaml")
     aligned = script_default == cli_default and all(port == cli_default for port in static_ports)
     return {
         "cli_default_port": cli_default,
