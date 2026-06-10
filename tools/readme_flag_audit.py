@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 
-FLAG_RE = re.compile(r"-{1,2}[A-Za-z0-9-]+")
+FLAG_RE = re.compile(r"(?:^|\s)(-{1,2}[A-Za-z0-9-]+)")
 
 
 def cli_flags(init_path: Path) -> set[str]:
