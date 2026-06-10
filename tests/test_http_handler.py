@@ -1,11 +1,13 @@
 import io
+import sys
+import types
+
+
+stub = types.ModuleType("mx_exporter.mx_exporter")
+stub.MxCollector = object
+sys.modules.setdefault("mx_exporter.mx_exporter", stub)
 
 from mx_exporter import MxExporterHandler
-
-
-class DummyRequest:
-    def makefile(self, *args, **kwargs):
-        return io.BytesIO()
 
 
 def build_handler(path):
