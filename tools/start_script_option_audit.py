@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
-
-
 import re
+from pathlib import Path
 
 
 TOKEN_RE = re.compile(r"--[A-Za-z0-9-]+|-[A-Za-z0-9]+")
@@ -20,7 +18,8 @@ def parse_documented(text: str) -> set[str]:
         line = raw_line.strip()
         if not line.startswith("--") or line.endswith(")") or ":)" in line:
             continue
-        items.update(TOKEN_RE.findall(line))
+        definition = line.split(maxsplit=1)[0]
+        items.update(TOKEN_RE.findall(definition))
     return items
 
 

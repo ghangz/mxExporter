@@ -13,8 +13,9 @@ class StartScriptOptionAuditTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "start_mxexporter.sh").write_text(
-                "    --port|-p=<port>\n"
-                "    --help|-h\n"
+                "    --port|-p=<port> Specific port, default: non-standard\n"
+                "    --help|-h Display help-message\n"
+                "    --help|-h)\n"
                 "    --port=*|-p=*)\n"
                 "    --pid=*)\n",
                 encoding="utf-8",
@@ -23,6 +24,7 @@ class StartScriptOptionAuditTest(unittest.TestCase):
             report = build(root)
 
         self.assertEqual(report["undocumented_options"], ["--pid"])
+        self.assertEqual(report["stale_documentation"], [])
 
 
 if __name__ == "__main__":
