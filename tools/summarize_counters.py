@@ -21,8 +21,8 @@ def summarize(path: Path) -> dict[str, object]:
                 continue
             metric_type = row[1].strip()
             metric_name = row[2].strip()
-            type_counts[metric_type] += 1
-            if metric_name:
+            if metric_type and metric_name:
+                type_counts[metric_type] += 1
                 metric_names.append(metric_name)
     duplicates = sorted(name for name, count in Counter(metric_names).items() if count > 1)
     return {
@@ -43,6 +43,9 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path, help="write summary JSON to this path")
     args = parser.parse_args()
+
+    if not args.path.is_file():
+        parser.error(f"input file does not exist: {args.path}")
 
     payload = summarize(args.path)
     text = json.dumps(payload, indent=2, ensure_ascii=False)

@@ -15,6 +15,8 @@ class SummarizeCountersTest(unittest.TestCase):
                 writer.writerow(["1", "Gauge", "mx_gpu_temp"])
                 writer.writerow(["2", "Gauge", "mx_gpu_temp"])
                 writer.writerow(["3", "Counter", "mx_error_count"])
+                writer.writerow(["4", "Gauge", ""])
+                writer.writerow(["5", "", "mx_ignored"])
 
             summary = summarize(path)
 
