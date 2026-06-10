@@ -11,9 +11,19 @@ from pathlib import Path
 def inventory(root: Path) -> dict[str, object]:
     dashboards = []
     for path in sorted((root / "deployment" / "grafana-dashboard").glob("*.json")):
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Failed to parse JSON file {path}: {exc}") from exc
         panels = data.get("panels", [])
-        dashboards.append({"path": path.relative_to(root).as_posix(), "title": data.get("title", ""), "uid": data.get("uid", ""), "panel_count": len(panels)})
+        dashboards.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "title": data.get("title", ""),
+                "uid": data.get("uid", ""),
+                "panel_count": len(panels),
+            }
+        )
     return {"dashboard_count": len(dashboards), "dashboards": dashboards}
 
 
