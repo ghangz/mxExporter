@@ -32,6 +32,7 @@ import os.path
 import csv
 import socket
 import threading
+import traceback
 from typing import Optional
 from datetime import datetime
 from prometheus_client import CollectorRegistry, Gauge, Counter, disable_created_metrics
@@ -57,22 +58,36 @@ class MxCollector(object):
             registry.register(self)
 
         self.lock = threading.Lock()
-        self.init_members(gather_interval, ib_monitor_flag, kubelet_path, k8s_domains)
+        self.init_members(config_file, gather_interval, ib_monitor_flag, kubelet_path, k8s_domains)
         self.init_required_metrics(config_file, self.metrics_supported)
 
         self.gpu_monitor.start(self.metrics_required.keys())
+        self.gpu_monitor_started = True
 
         if any(metric in self.metrics_required for metric in self.kernel_log_monitor.get_supported_metrics()):
-            self.kernel_log_monitor.start(mount_point)
+            self.kernel_log_monitor_started = self.kernel_log_monitor.start(mount_point)
 
         if any(metric in self.metrics_required for metric in self.sys_log_monitor.get_supported_metrics()):
-            self.sys_log_monitor.start(mount_point)
+            self.sys_log_monitor_started = self.sys_log_monitor.start(mount_point)
+
+        self.ready = True
 
     def describe(self):
         return []
 
-    def init_members(self, gather_interval, ib_monitor_flag, kubelet_path, k8s_domains):
+    def init_members(self, config_file, gather_interval, ib_monitor_flag, kubelet_path, k8s_domains):
         self.ib_monitor_flag = ib_monitor_flag
+        self.config_file = config_file
+        self.start_time = datetime.utcnow()
+        self.ready = False
+        self.gpu_monitor_started = False
+        self.kernel_log_monitor_started = False
+        self.sys_log_monitor_started = False
+        self.collect_count = 0
+        self.last_collect_started_at = None
+        self.last_collect_completed_at = None
+        self.last_collect_duration_ms = None
+        self.last_collect_error = ""
 
         # device uuid : pod info
         self.device_pod_map = {}
@@ -135,27 +150,43 @@ class MxCollector(object):
     def collect(self):
         with self.lock:
             print("Export metrics")
-            time.sleep(0.05) # avoid 2nd thread clear metrics before 1st send response
-            self.device_info_map = self.gpu_monitor.get_device_info_map()
-            self.device_pod_map = self.pod_collector.get_pod_resource()
-            if not self.device_pod_map:
-                self.device_pod_map = ContainerInfoCollector(self.device_info_map).get_container_resource()
+            collect_started_at = datetime.utcnow()
+            start_time = time.time()
+            self.last_collect_started_at = collect_started_at
+            try:
+                time.sleep(0.05) # avoid 2nd thread clear metrics before 1st send response
+                self.device_info_map = self.gpu_monitor.get_device_info_map()
+                self.device_pod_map = self.pod_collector.get_pod_resource()
+                if not self.device_pod_map:
+                    self.device_pod_map = ContainerInfoCollector(self.device_info_map).get_container_resource()
 
-            self.all_sgpu_info, self.sgpu_pod_register_id = self.gpu_monitor.get_sgpu_info_dict()
+                self.all_sgpu_info, self.sgpu_pod_register_id = self.gpu_monitor.get_sgpu_info_dict()
 
-            self.generate_common_labels()
-            self.generate_sgpu_labels()
+                self.generate_common_labels()
+                self.generate_sgpu_labels()
 
-            self.export_device_info()
-            self.export_device_basic_metrics()
-            self.export_server_info()
-            self.export_log_info()
+                self.export_device_info()
+                self.export_device_basic_metrics()
+                self.export_server_info()
+                self.export_log_info()
 
-            if self.ib_monitor_flag:
-                self.ib_monitor.export(self.host_name)
-                self.bnxt_monitor.export(self.host_name)
-            self.eth_monitor.export(self.host_name)
-            return []
+                if self.ib_monitor_flag:
+                    self.ib_monitor.export(self.host_name)
+                    self.bnxt_monitor.export(self.host_name)
+                self.eth_monitor.export(self.host_name)
+                self.collect_count += 1
+                self.last_collect_error = ""
+                return []
+            except Exception as exc:
+                self.last_collect_error = "%s: %s\n%s" % (
+                    exc.__class__.__name__,
+                    exc,
+                    traceback.format_exc(),
+                )
+                raise
+            finally:
+                self.last_collect_completed_at = datetime.utcnow()
+                self.last_collect_duration_ms = round((time.time() - start_time) * 1000, 2)
 
 
     def init_required_metrics(self, config_file, metrics_supported):
@@ -450,3 +481,31 @@ class MxCollector(object):
                     metric_obj.labels(*labels).inc(0)
             else:
                 metric_obj.labels(*labels).inc(value)
+
+    def get_health_status(self):
+        return {
+            "ready": self.ready,
+            "config_file": self.config_file,
+            "hostname": self.host_name,
+            "gather_interval_seconds": self.gpu_monitor.gather_interval,
+            "supported_metric_count": len(self.metrics_supported),
+            "configured_metric_count": len(self.metrics_required),
+            "collect_count": self.collect_count,
+            "collector_started_at": self.start_time.isoformat() + "Z",
+            "last_collect_started_at": _isoformat_or_none(self.last_collect_started_at),
+            "last_collect_completed_at": _isoformat_or_none(self.last_collect_completed_at),
+            "last_collect_duration_ms": self.last_collect_duration_ms,
+            "last_collect_error": self.last_collect_error,
+            "monitor_status": {
+                "gpu_monitor_started": self.gpu_monitor_started,
+                "kernel_log_monitor_started": self.kernel_log_monitor_started,
+                "sys_log_monitor_started": self.sys_log_monitor_started,
+                "ib_monitor_enabled": bool(self.ib_monitor_flag),
+            },
+        }
+
+
+def _isoformat_or_none(dt):
+    if dt is None:
+        return None
+    return dt.isoformat() + "Z"

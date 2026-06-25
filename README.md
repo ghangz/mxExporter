@@ -79,3 +79,8 @@ $ sudo systemctl start mx-exporter.service
 ```
 Use `sudo journalctl -u mx-exporter.service` to see service details
 
+## HTTP Endpoints
+
+- `/metrics`: Prometheus metrics endpoint
+- `/json`: JSON view of the exported metrics
+- `/health`: exporter readiness and the latest collection state, including monitor startup results and the most recent collection error

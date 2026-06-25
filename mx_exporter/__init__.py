@@ -6,7 +6,11 @@ import json
 from http.server import HTTPServer
 from prometheus_client import MetricsHandler
 from prometheus_client import REGISTRY, GC_COLLECTOR, PLATFORM_COLLECTOR, PROCESS_COLLECTOR
-from mx_exporter.mx_exporter import MxCollector
+
+
+EXPORTER_CONTEXT = {
+    "collector": None,
+}
 
 
 def check_port(value):
@@ -71,9 +75,7 @@ class MxExporterHandler(MetricsHandler):
             self.wfile.write(html_content.encode("utf-8"))
 
         elif self.path == '/health':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
+            self._handle_health()
 
         elif self.path == '/json':
             self._handle_json()
@@ -103,7 +105,43 @@ class MxExporterHandler(MetricsHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _handle_health(self):
+        collector = EXPORTER_CONTEXT.get("collector")
+        payload = build_health_payload(collector)
+        status_code = 200 if payload["status"] == "ok" else 503
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def build_health_payload(collector):
+    if collector is None:
+        return {
+            "status": "starting",
+            "details": {
+                "ready": False,
+                "reason": "collector is not initialized",
+            },
+        }
+
+    details = collector.get_health_status()
+    status = "ok"
+    if not details.get("ready"):
+        status = "starting"
+    elif details.get("last_collect_error"):
+        status = "degraded"
+
+    return {
+        "status": status,
+        "details": details,
+    }
+
 def main():
+    from mx_exporter.mx_exporter import MxCollector
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
@@ -139,6 +177,7 @@ def main():
     registry = REGISTRY
 
     mx_collector = MxCollector(cfg_file, registry, args.interval/1000, args.ib_monitor, args.mount_point, args.kubelet_path, args.k8s_domains)
+    EXPORTER_CONTEXT["collector"] = mx_collector
 
     server_address = ('', args.port)
     try:
