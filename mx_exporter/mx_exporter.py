@@ -51,7 +51,8 @@ print = timestamp_print
 class MxCollector(object):
 
     def __init__(self, config_file, registry: Optional[CollectorRegistry] = None, gather_interval = 10,
-            ib_monitor_flag = 0, mount_point = "", kubelet_path = '/var/lib/kubelet', k8s_domains = [("metax-tech")]):
+            ib_monitor_flag = 0, mount_point = "", kubelet_path = '/var/lib/kubelet', k8s_domains = [("metax-tech")],
+            kernel_log_monitor_flag = 1, sys_log_monitor_flag = 1):
 
         if registry is not None:
             registry.register(self)
@@ -62,10 +63,10 @@ class MxCollector(object):
 
         self.gpu_monitor.start(self.metrics_required.keys())
 
-        if any(metric in self.metrics_required for metric in self.kernel_log_monitor.get_supported_metrics()):
+        if kernel_log_monitor_flag and any(metric in self.metrics_required for metric in self.kernel_log_monitor.get_supported_metrics()):
             self.kernel_log_monitor.start(mount_point)
 
-        if any(metric in self.metrics_required for metric in self.sys_log_monitor.get_supported_metrics()):
+        if sys_log_monitor_flag and any(metric in self.metrics_required for metric in self.sys_log_monitor.get_supported_metrics()):
             self.sys_log_monitor.start(mount_point)
 
     def describe(self):

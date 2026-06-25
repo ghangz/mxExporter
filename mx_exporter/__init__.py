@@ -6,7 +6,6 @@ import json
 from http.server import HTTPServer
 from prometheus_client import MetricsHandler
 from prometheus_client import REGISTRY, GC_COLLECTOR, PLATFORM_COLLECTOR, PROCESS_COLLECTOR
-from mx_exporter.mx_exporter import MxCollector
 
 
 def check_port(value):
@@ -103,21 +102,29 @@ class MxExporterHandler(MetricsHandler):
         self.end_headers()
         self.wfile.write(body)
 
-def main():
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
 
+def build_arg_parser():
     parser = argparse.ArgumentParser(description="MetaX Data Exporter")
     parser.add_argument("-p", "--port", type=check_port, default=8000, help="HTTP listen port")
     parser.add_argument("-i", "--interval", type=check_interval, default=10000, help="Metrics gathering interval, unit:ms")
     parser.add_argument("-c", "--config-file", type=check_path, help="Path to metrics config file")
     parser.add_argument("-m", "--mode", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
     parser.add_argument("-lm", "--log-monitor", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
+    parser.add_argument("--kernel-log-monitor", type=int, choices=[0,1], default=1, help="0/1 - Disable/Enable kernel log monitoring")
+    parser.add_argument("--sys-log-monitor", type=int, choices=[0,1], default=1, help="0/1 - Disable/Enable system log monitoring")
     parser.add_argument("-im", "--ib-monitor", type=int, choices=[0,1], default=0, help=argparse.SUPPRESS) # help="0/1 - Disable/Enable IB NIC counter monitoring"
     parser.add_argument("-mp", "--mount-point", type=check_path, default="/", help="Container mount point")
     parser.add_argument("-kp", "--kubelet-path", type=str, default="/var/lib/kubelet", help="Kubelet root dir")
     parser.add_argument("-kd", "--k8s-domains", nargs='+', type=str, default=["metax-tech"], help="Monitoring the k8s domains contains specified keywords, multi-keywords e.g. -kd domain1 domain2")
+    return parser
 
+def main():
+    from mx_exporter.mx_exporter import MxCollector
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    parser = build_arg_parser()
     args = parser.parse_args()
     print(args)
 
@@ -138,7 +145,17 @@ def main():
 
     registry = REGISTRY
 
-    mx_collector = MxCollector(cfg_file, registry, args.interval/1000, args.ib_monitor, args.mount_point, args.kubelet_path, args.k8s_domains)
+    mx_collector = MxCollector(
+        cfg_file,
+        registry,
+        args.interval/1000,
+        args.ib_monitor,
+        args.mount_point,
+        args.kubelet_path,
+        args.k8s_domains,
+        args.kernel_log_monitor,
+        args.sys_log_monitor,
+    )
 
     server_address = ('', args.port)
     try:

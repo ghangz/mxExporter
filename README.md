@@ -19,6 +19,10 @@ if you want to change port and process interval settings, use this:
 $ sudo docker run -d --name=mx-exporter --device=/dev/dri -p 0.0.0.0:<host port>:<http port> <image name> -p <http port> -i <interval>
 ```
 
+If the container only exposes one of the host log streams, you can also control
+the two log collectors independently with `--kernel-log-monitor 0|1` and
+`--sys-log-monitor 0|1`.
+
 if you want to use self defined counter configuration file on host, here's an example:
 ```
 $ sudo docker run -d --name=mx-exporter --device=/dev/dri -p 0.0.0.0:<host port>:<http port> -v <new config file>:/work/counters.csv <image name> -c /work/counters.csv
