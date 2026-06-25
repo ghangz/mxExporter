@@ -6,7 +6,6 @@ import json
 from http.server import HTTPServer
 from prometheus_client import MetricsHandler
 from prometheus_client import REGISTRY, GC_COLLECTOR, PLATFORM_COLLECTOR, PROCESS_COLLECTOR
-from mx_exporter.mx_exporter import MxCollector
 
 
 def check_port(value):
@@ -104,6 +103,8 @@ class MxExporterHandler(MetricsHandler):
         self.wfile.write(body)
 
 def main():
+    from mx_exporter.mx_exporter import MxCollector
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 

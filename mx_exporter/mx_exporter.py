@@ -40,6 +40,7 @@ from mx_exporter.ib_metrics import IBMonitor, BnxtMonitor, ETHMonitor
 from mx_exporter.kubernetes import PodInfo, PodInfoCollector
 from mx_exporter.container import ContainerInfoCollector
 from mx_exporter.log_monitor import KernelLogMonitor,SysLogMonitor
+from mx_exporter.config_loader import load_metric_rows
 from collections import defaultdict
 
 old_print = print
@@ -95,6 +96,7 @@ class MxCollector(object):
 
         # required metrics in config file
         self.metrics_required = {}
+        self.config_diagnostics = []
 
         self.metric_types = ["Gauge", "Counter", "Summary", "Histogram", "Info"]
 
@@ -159,24 +161,29 @@ class MxCollector(object):
 
 
     def init_required_metrics(self, config_file, metrics_supported):
-        with open(config_file, 'r') as file_handle:
-            reader=csv.reader(file_handle)
-            for row in reader:
-                print(row)
-                if not self.is_row_valid(row, metrics_supported):
-                    continue
+        metric_rows, self.config_diagnostics = load_metric_rows(config_file, metrics_supported, self.metric_types)
+        for diagnostic in self.config_diagnostics:
+            print("Skip config line %d: %s row=%s" % (
+                diagnostic["line"],
+                diagnostic["reason"],
+                diagnostic["row"],
+            ))
 
-                # metric id,metric type,metric name,metric description,label1,label2,...
-                # metric type is also metric function, eg, Gauge
-                metric_id = row[0]
-                metric_func = globals()[row[1]]
-                metric_name = row[2]
-                metric_description = row[3]
-                metric_labels = row[4:]
-                try:
-                    self.metrics_required[metric_id] = metric_func(metric_name, metric_description, metric_labels)
-                except Exception as e:
-                    print("Create metric exception: %s" % (e))
+        for row in metric_rows:
+            # metric id,metric type,metric name,metric description,label1,label2,...
+            # metric type is also metric function, eg, Gauge
+            metric_id = row[0]
+            metric_func = globals()[row[1]]
+            metric_name = row[2]
+            metric_description = row[3]
+            metric_labels = row[4:]
+            try:
+                self.metrics_required[metric_id] = metric_func(metric_name, metric_description, metric_labels)
+            except Exception as e:
+                print("Create metric exception: %s" % (e))
+
+        if len(self.metrics_required) == 0:
+            raise ValueError("No valid metrics were loaded from config file: %s" % config_file)
         # disable prometheus counter created series
         disable_created_metrics()
 
@@ -204,6 +211,9 @@ class MxCollector(object):
             return False
 
         return True
+
+    def get_config_diagnostics(self):
+        return list(self.config_diagnostics)
 
 
     def export_device_basic_metrics(self):

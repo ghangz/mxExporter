@@ -79,3 +79,7 @@ $ sudo systemctl start mx-exporter.service
 ```
 Use `sudo journalctl -u mx-exporter.service` to see service details
 
+## Config Diagnostics
+
+When the metrics CSV contains unsupported metric IDs, invalid metric types, or duplicate metric IDs and names, the exporter prints the exact line number and reason. If every row is invalid, startup fails immediately instead of exposing an empty metrics endpoint.
+
