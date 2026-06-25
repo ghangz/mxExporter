@@ -33,6 +33,12 @@ port: http listen port, default:8000
 interval: Metrics gathering interval, default:10000ms
 config_file: Metrics configuration file in CSV format, default: ./default-counters.csv
 
+The same settings can be injected with environment variables when running under
+systemd or container orchestrators:
+`MX_EXPORTER_PORT`, `MX_EXPORTER_INTERVAL_MS`, `MX_EXPORTER_CONFIG_FILE`,
+`MX_EXPORTER_MOUNT_POINT`, `MX_EXPORTER_KUBELET_PATH`, `MX_EXPORTER_K8S_DOMAINS`,
+and `MX_EXPORTER_IB_MONITOR`.
+
 ## Deployment
 
 ## Deploy with kubernetes

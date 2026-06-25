@@ -6,7 +6,6 @@ import json
 from http.server import HTTPServer
 from prometheus_client import MetricsHandler
 from prometheus_client import REGISTRY, GC_COLLECTOR, PLATFORM_COLLECTOR, PROCESS_COLLECTOR
-from mx_exporter.mx_exporter import MxCollector
 
 
 def check_port(value):
@@ -29,7 +28,30 @@ def check_path(value):
     return value
 
 
+def get_env_default(env_key, default_value, validator=None):
+    value = os.environ.get(env_key)
+    if value is None or value == "":
+        return default_value
+    if validator is not None:
+        return validator(value)
+    return value
+
+
+def get_env_domains(env_key, default_value):
+    value = os.environ.get(env_key)
+    if value is None or value.strip() == "":
+        return default_value
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def get_default_config_file():
+    env_config = os.environ.get("MX_EXPORTER_CONFIG_FILE")
+    if env_config:
+        if os.path.exists(env_config):
+            print("Find config file from MX_EXPORTER_CONFIG_FILE: %s" % env_config)
+            return env_config
+        raise argparse.ArgumentTypeError("%s is an invalid path" % env_config)
+
     default_config_files = [
         "/opt/maca/etc/default-counters.csv",
         "/opt/mxn100/etc/default-counters.csv",
@@ -104,19 +126,21 @@ class MxExporterHandler(MetricsHandler):
         self.wfile.write(body)
 
 def main():
+    from mx_exporter.mx_exporter import MxCollector
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
     parser = argparse.ArgumentParser(description="MetaX Data Exporter")
-    parser.add_argument("-p", "--port", type=check_port, default=8000, help="HTTP listen port")
-    parser.add_argument("-i", "--interval", type=check_interval, default=10000, help="Metrics gathering interval, unit:ms")
+    parser.add_argument("-p", "--port", type=check_port, default=get_env_default("MX_EXPORTER_PORT", 8000, check_port), help="HTTP listen port")
+    parser.add_argument("-i", "--interval", type=check_interval, default=get_env_default("MX_EXPORTER_INTERVAL_MS", 10000, check_interval), help="Metrics gathering interval, unit:ms")
     parser.add_argument("-c", "--config-file", type=check_path, help="Path to metrics config file")
     parser.add_argument("-m", "--mode", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
     parser.add_argument("-lm", "--log-monitor", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
-    parser.add_argument("-im", "--ib-monitor", type=int, choices=[0,1], default=0, help=argparse.SUPPRESS) # help="0/1 - Disable/Enable IB NIC counter monitoring"
-    parser.add_argument("-mp", "--mount-point", type=check_path, default="/", help="Container mount point")
-    parser.add_argument("-kp", "--kubelet-path", type=str, default="/var/lib/kubelet", help="Kubelet root dir")
-    parser.add_argument("-kd", "--k8s-domains", nargs='+', type=str, default=["metax-tech"], help="Monitoring the k8s domains contains specified keywords, multi-keywords e.g. -kd domain1 domain2")
+    parser.add_argument("-im", "--ib-monitor", type=int, choices=[0,1], default=get_env_default("MX_EXPORTER_IB_MONITOR", 0, int), help=argparse.SUPPRESS) # help="0/1 - Disable/Enable IB NIC counter monitoring"
+    parser.add_argument("-mp", "--mount-point", type=check_path, default=get_env_default("MX_EXPORTER_MOUNT_POINT", "/", check_path), help="Container mount point")
+    parser.add_argument("-kp", "--kubelet-path", type=str, default=get_env_default("MX_EXPORTER_KUBELET_PATH", "/var/lib/kubelet"), help="Kubelet root dir")
+    parser.add_argument("-kd", "--k8s-domains", nargs='+', type=str, default=get_env_domains("MX_EXPORTER_K8S_DOMAINS", ["metax-tech"]), help="Monitoring the k8s domains contains specified keywords, multi-keywords e.g. -kd domain1 domain2")
 
     args = parser.parse_args()
     print(args)
