@@ -27,6 +27,13 @@ class BuildHealthPayloadTests(unittest.TestCase):
         payload = build_health_payload(collector)
         self.assertEqual(payload["status"], "degraded")
 
+    def test_returns_degraded_when_monitors_unhealthy(self):
+        collector = FakeCollector(
+            {"ready": True, "last_collect_error": "", "monitors_healthy": False}
+        )
+        payload = build_health_payload(collector)
+        self.assertEqual(payload["status"], "degraded")
+
 
 if __name__ == "__main__":
     unittest.main()

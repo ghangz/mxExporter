@@ -108,7 +108,7 @@ class MxExporterHandler(MetricsHandler):
     def _handle_health(self):
         collector = EXPORTER_CONTEXT.get("collector")
         payload = build_health_payload(collector)
-        status_code = 200 if payload["status"] == "ok" else 503
+        status_code = 200 if payload["status"] in ("ok", "degraded") else 503
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         self.send_response(status_code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -131,7 +131,7 @@ def build_health_payload(collector):
     status = "ok"
     if not details.get("ready"):
         status = "starting"
-    elif details.get("last_collect_error"):
+    elif details.get("last_collect_error") or not details.get("monitors_healthy", True):
         status = "degraded"
 
     return {

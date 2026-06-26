@@ -64,10 +64,18 @@ class MxCollector(object):
         self.gpu_monitor.start(self.metrics_required.keys())
         self.gpu_monitor_started = True
 
-        if any(metric in self.metrics_required for metric in self.kernel_log_monitor.get_supported_metrics()):
+        self.kernel_log_monitor_required = any(
+            metric in self.metrics_required
+            for metric in self.kernel_log_monitor.get_supported_metrics()
+        )
+        if self.kernel_log_monitor_required:
             self.kernel_log_monitor_started = self.kernel_log_monitor.start(mount_point)
 
-        if any(metric in self.metrics_required for metric in self.sys_log_monitor.get_supported_metrics()):
+        self.sys_log_monitor_required = any(
+            metric in self.metrics_required
+            for metric in self.sys_log_monitor.get_supported_metrics()
+        )
+        if self.sys_log_monitor_required:
             self.sys_log_monitor_started = self.sys_log_monitor.start(mount_point)
 
         self.ready = True
@@ -83,6 +91,8 @@ class MxCollector(object):
         self.gpu_monitor_started = False
         self.kernel_log_monitor_started = False
         self.sys_log_monitor_started = False
+        self.kernel_log_monitor_required = False
+        self.sys_log_monitor_required = False
         self.collect_count = 0
         self.last_collect_started_at = None
         self.last_collect_completed_at = None
@@ -483,8 +493,15 @@ class MxCollector(object):
                 metric_obj.labels(*labels).inc(value)
 
     def get_health_status(self):
+        monitors_healthy = True
+        if self.kernel_log_monitor_required and not self.kernel_log_monitor_started:
+            monitors_healthy = False
+        if self.sys_log_monitor_required and not self.sys_log_monitor_started:
+            monitors_healthy = False
+
         return {
             "ready": self.ready,
+            "monitors_healthy": monitors_healthy,
             "config_file": self.config_file,
             "hostname": self.host_name,
             "gather_interval_seconds": self.gpu_monitor.gather_interval,
@@ -500,6 +517,8 @@ class MxCollector(object):
                 "gpu_monitor_started": self.gpu_monitor_started,
                 "kernel_log_monitor_started": self.kernel_log_monitor_started,
                 "sys_log_monitor_started": self.sys_log_monitor_started,
+                "kernel_log_monitor_required": self.kernel_log_monitor_required,
+                "sys_log_monitor_required": self.sys_log_monitor_required,
                 "ib_monitor_enabled": bool(self.ib_monitor_flag),
             },
         }
