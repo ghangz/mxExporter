@@ -7,7 +7,7 @@ def load_metric_rows(config_file, metrics_supported, metric_types):
     seen_metric_ids = set()
     seen_metric_names = set()
 
-    with open(config_file, "r", newline="") as file_handle:
+    with open(config_file, "r", newline="", encoding="utf-8") as file_handle:
         reader = csv.reader(file_handle)
         for line_no, row in enumerate(reader, start=1):
             reason = validate_row(row, metrics_supported, metric_types, seen_metric_ids, seen_metric_names)
@@ -33,7 +33,7 @@ def validate_row(row, metrics_supported, metric_types, seen_metric_ids=None, see
     if len(row) == 0:
         return "empty line"
 
-    if row[0].startswith("#"):
+    if row[0].lstrip().startswith("#"):
         return "comment line"
 
     if len(row) < 4:

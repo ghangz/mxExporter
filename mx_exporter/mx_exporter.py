@@ -173,12 +173,19 @@ class MxCollector(object):
             # metric id,metric type,metric name,metric description,label1,label2,...
             # metric type is also metric function, eg, Gauge
             metric_id = row[0]
-            metric_func = globals()[row[1]]
             metric_name = row[2]
             metric_description = row[3]
             metric_labels = row[4:]
             try:
+                if row[1] in globals():
+                    metric_func = globals()[row[1]]
+                else:
+                    import prometheus_client
+
+                    metric_func = getattr(prometheus_client, row[1])
                 self.metrics_required[metric_id] = metric_func(metric_name, metric_description, metric_labels)
+            except (AttributeError, KeyError):
+                print("Unsupported metric type: %s" % row[1])
             except Exception as e:
                 print("Create metric exception: %s" % (e))
 

@@ -20,7 +20,7 @@ class ConfigLoaderTests(unittest.TestCase):
         fd, path = tempfile.mkstemp(suffix=".csv")
         os.close(fd)
         try:
-            with open(path, "w", newline="") as handle:
+            with open(path, "w", newline="", encoding="utf-8") as handle:
                 handle.write("# comment\n")
                 handle.write("gpu_usage,Gauge,mx_gpu_usage,desc,label1\n")
                 handle.write("gpu_usage,Gauge,mx_gpu_usage_dup,desc,label1\n")
@@ -43,6 +43,10 @@ class ConfigLoaderTests(unittest.TestCase):
         self.assertTrue(any("duplicate metric id" in reason for reason in reasons))
         self.assertTrue(any("unsupported metric id" in reason for reason in reasons))
         self.assertTrue(any("invalid metric type" in reason for reason in reasons))
+
+    def test_validate_row_treats_indented_hash_as_comment(self):
+        reason = validate_row(["   # comment"], {"gpu_usage"}, ["Gauge"])
+        self.assertEqual(reason, "comment line")
 
 
 if __name__ == "__main__":
