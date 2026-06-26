@@ -28,6 +28,13 @@ def check_path(value):
     return value
 
 
+def check_binary_flag(value):
+    flag = int(value)
+    if flag not in (0, 1):
+        raise argparse.ArgumentTypeError("%s is invalid, expected 0 or 1" % value)
+    return flag
+
+
 def get_env_default(env_key, default_value, validator=None):
     value = os.environ.get(env_key)
     if value is None or value == "":
@@ -125,24 +132,48 @@ class MxExporterHandler(MetricsHandler):
         self.end_headers()
         self.wfile.write(body)
 
+def build_arg_parser():
+    parser = argparse.ArgumentParser(description="MetaX Data Exporter")
+    parser.add_argument("-p", "--port", type=check_port, help="HTTP listen port")
+    parser.add_argument("-i", "--interval", type=check_interval, help="Metrics gathering interval, unit:ms")
+    parser.add_argument("-c", "--config-file", type=check_path, help="Path to metrics config file")
+    parser.add_argument("-m", "--mode", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
+    parser.add_argument("-lm", "--log-monitor", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
+    parser.add_argument("-im", "--ib-monitor", type=int, choices=[0,1], help=argparse.SUPPRESS) # help="0/1 - Disable/Enable IB NIC counter monitoring"
+    parser.add_argument("-mp", "--mount-point", type=check_path, help="Container mount point")
+    parser.add_argument("-kp", "--kubelet-path", type=str, help="Kubelet root dir")
+    parser.add_argument("-kd", "--k8s-domains", nargs='+', type=str, help="Monitoring the k8s domains contains specified keywords, multi-keywords e.g. -kd domain1 domain2")
+    return parser
+
+
+def apply_env_defaults(args):
+    if args.port is None:
+        args.port = get_env_default("MX_EXPORTER_PORT", 8000, check_port)
+    if args.interval is None:
+        args.interval = get_env_default("MX_EXPORTER_INTERVAL_MS", 10000, check_interval)
+    if args.ib_monitor is None:
+        args.ib_monitor = get_env_default("MX_EXPORTER_IB_MONITOR", 0, check_binary_flag)
+    if args.mount_point is None:
+        args.mount_point = get_env_default("MX_EXPORTER_MOUNT_POINT", "/", check_path)
+    if args.kubelet_path is None:
+        args.kubelet_path = get_env_default("MX_EXPORTER_KUBELET_PATH", "/var/lib/kubelet")
+    if args.k8s_domains is None:
+        args.k8s_domains = get_env_domains("MX_EXPORTER_K8S_DOMAINS", ["metax-tech"])
+    return args
+
+
 def main():
     from mx_exporter.mx_exporter import MxCollector
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    parser = argparse.ArgumentParser(description="MetaX Data Exporter")
-    parser.add_argument("-p", "--port", type=check_port, default=get_env_default("MX_EXPORTER_PORT", 8000, check_port), help="HTTP listen port")
-    parser.add_argument("-i", "--interval", type=check_interval, default=get_env_default("MX_EXPORTER_INTERVAL_MS", 10000, check_interval), help="Metrics gathering interval, unit:ms")
-    parser.add_argument("-c", "--config-file", type=check_path, help="Path to metrics config file")
-    parser.add_argument("-m", "--mode", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
-    parser.add_argument("-lm", "--log-monitor", type=int, choices=[0,1], default=1, help="Deprecated, keep for back compatibility")
-    parser.add_argument("-im", "--ib-monitor", type=int, choices=[0,1], default=get_env_default("MX_EXPORTER_IB_MONITOR", 0, int), help=argparse.SUPPRESS) # help="0/1 - Disable/Enable IB NIC counter monitoring"
-    parser.add_argument("-mp", "--mount-point", type=check_path, default=get_env_default("MX_EXPORTER_MOUNT_POINT", "/", check_path), help="Container mount point")
-    parser.add_argument("-kp", "--kubelet-path", type=str, default=get_env_default("MX_EXPORTER_KUBELET_PATH", "/var/lib/kubelet"), help="Kubelet root dir")
-    parser.add_argument("-kd", "--k8s-domains", nargs='+', type=str, default=get_env_domains("MX_EXPORTER_K8S_DOMAINS", ["metax-tech"]), help="Monitoring the k8s domains contains specified keywords, multi-keywords e.g. -kd domain1 domain2")
-
+    parser = build_arg_parser()
     args = parser.parse_args()
+    try:
+        args = apply_env_defaults(args)
+    except (ValueError, argparse.ArgumentTypeError) as exc:
+        parser.error("Configuration error: %s" % exc)
     print(args)
 
     cfg_file = ""
