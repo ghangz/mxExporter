@@ -107,9 +107,13 @@ class LogHandler:
         self.buf = []
         self.dataset = []
         self.lock = threading.Lock()
+        self.transfer_thread = None
 
-        t = threading.Thread(target=self.transfer, args=(), daemon=True)
-        t.start()
+    def start(self):
+        if self.transfer_thread is not None and self.transfer_thread.is_alive():
+            return
+        self.transfer_thread = threading.Thread(target=self.transfer, args=(), daemon=True)
+        self.transfer_thread.start()
 
     def handle(self, log):
         content = self.regex_obj.findall(log)
@@ -147,6 +151,9 @@ class LogMonitor:
         if not os.path.exists(log_file):
             print("%s Invalid log file: %s" % (self.__class__.__name__, log_file))
             return False
+
+        for handler in self.handlers:
+            handler.start()
 
         self.log_file = log_file
         t = threading.Thread(target=self.monitor, args=(), daemon=True)

@@ -146,15 +146,15 @@ def main():
     registry = REGISTRY
 
     mx_collector = MxCollector(
-        cfg_file,
-        registry,
-        args.interval/1000,
-        args.ib_monitor,
-        args.mount_point,
-        args.kubelet_path,
-        args.k8s_domains,
-        args.kernel_log_monitor,
-        args.sys_log_monitor,
+        config_file=cfg_file,
+        registry=registry,
+        gather_interval=args.interval/1000,
+        ib_monitor_flag=args.ib_monitor,
+        mount_point=args.mount_point,
+        kubelet_path=args.kubelet_path,
+        k8s_domains=args.k8s_domains,
+        kernel_log_monitor_flag=args.kernel_log_monitor,
+        sys_log_monitor_flag=args.sys_log_monitor,
     )
 
     server_address = ('', args.port)
